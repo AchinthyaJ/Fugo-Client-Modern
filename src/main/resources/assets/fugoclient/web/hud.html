@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fugo HUD</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- The Overlay HUD Layout -->
+    <div id="overlay-container" class="ui-container">
+        <!-- 1. General Stats (Top Left) -->
+        <div id="hud-top-left" class="hud-widget">
+            <div class="hud-stat"><span id="hud-fps">0</span> FPS</div>
+        </div>
+        <div id="hud-top-left-ping" class="hud-widget" style="top: 4rem;">
+            <div class="hud-stat"><span id="hud-ping">0</span> ms</div>
+        </div>
+        <div id="fugo-watermark" style="position: absolute; top: 1rem; left: 1rem; opacity: 0.2; font-size: 0.7rem; font-weight: 700; color: rgba(10, 132, 255, 0.4); pointer-events: none; z-index: 5;">FUGO</div>
+
+        <!-- 2. Coordinates & Facing (Top Right) -->
+        <div id="hud-top-right" class="hud-widget">
+            <div id="hud-coords" class="hud-coords-txt">X: 0 Y: 0 Z: 0</div>
+            <div id="hud-dir" class="hud-dir-txt">WEST</div>
+        </div>
+
+        <!-- 3. Speedometer (Bottom Left) -->
+        <div id="hud-bottom-left" class="hud-widget">
+            <div class="speed-text"><span id="hud-bps">0.00</span> BPS</div>
+            <div class="speed-bar-container">
+                <div id="hud-speed-bar" class="speed-bar"></div>
+            </div>
+        </div>
+
+        <!-- 4. Keystrokes & CPS (Bottom Right) -->
+        <div id="hud-bottom-right" class="hud-widget">
+            <div class="keystrokes-container">
+                <div class="key-row">
+                    <div id="key-w" class="key">W</div>
+                </div>
+                <div class="key-row">
+                    <div id="key-a" class="key">A</div>
+                    <div id="key-s" class="key">S</div>
+                    <div id="key-d" class="key">D</div>
+                </div>
+                <div class="key-row split">
+                    <div id="key-lmb" class="key double">LMB <span id="cps-lmb" class="cps-val">0 CPS</span></div>
+                    <div id="key-rmb" class="key double">RMB <span id="cps-rmb" class="cps-val">0 CPS</span></div>
+                </div>
+                <div class="key-row">
+                    <div id="key-space" class="key space-bar">Space</div>
+                </div>
+                <div class="key-row split">
+                    <div id="key-shift" class="key shift-key">Shift</div>
+                    <div id="key-sprint" class="key sprint-key">Sprint</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. Armor HUD -->
+        <div id="hud-armor" class="hud-widget">
+            <div class="armor-slots">
+                <div id="armor-helmet" class="armor-slot">
+                    <span class="armor-icon"></span>
+                    <div class="durability-bar"><div class="bar-fill"></div></div>
+                </div>
+                <div id="armor-chest" class="armor-slot">
+                    <span class="armor-icon"></span>
+                    <div class="durability-bar"><div class="bar-fill"></div></div>
+                </div>
+                <div id="armor-leggings" class="armor-slot">
+                    <span class="armor-icon"></span>
+                    <div class="durability-bar"><div class="bar-fill"></div></div>
+                </div>
+                <div id="armor-boots" class="armor-slot">
+                    <span class="armor-icon"></span>
+                    <div class="durability-bar"><div class="bar-fill"></div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. Potion Effects -->
+        <div id="hud-potion-effects" class="hud-widget">
+            <div class="widget-header">Potion Effects</div>
+            <div id="potions-container"></div>
+        </div>
+
+        <!-- 7. Held Item Info -->
+        <div id="hud-item-info" class="hud-widget">
+            <div class="item-header"><span id="item-name">None</span></div>
+            <div class="item-details">Durability: <span id="item-durability">N/A</span></div>
+            <div class="item-cooldown-container">
+                <div id="item-cooldown-bar" class="item-cooldown-bar"></div>
+            </div>
+        </div>
+
+        <!-- 8. Player Status (Health, Hunger, XP) -->
+        <div id="hud-player-status" class="hud-widget">
+            <div class="status-row">
+                <span></span>
+                <div class="status-bar-container">
+                    <div id="status-health" class="status-bar health"></div>
+                </div>
+                <span id="status-health-val" class="status-val">20</span>
+            </div>
+            <div class="status-row">
+                <span></span>
+                <div class="status-bar-container">
+                    <div id="status-hunger" class="status-bar hunger"></div>
+                </div>
+                <span id="status-hunger-val" class="status-val">20</span>
+            </div>
+            <div class="status-row">
+                <span></span>
+                <div class="status-bar-container">
+                    <div id="status-xp" class="status-bar xp"></div>
+                </div>
+                <span id="status-xp-val" class="status-val">Lvl 0</span>
+            </div>
+        </div>
+
+        <!-- 9. Combat Stats -->
+        <div id="hud-combat-stats" class="hud-widget">
+            <div class="combat-item">Combo: <span id="combat-combo">0</span></div>
+            <div class="combat-item">Reach: <span id="combat-reach">0.00m</span></div>
+        </div>
+
+        <!-- 10. Target Info -->
+        <div id="hud-target-info" class="hud-widget hidden">
+            <div class="target-title" id="target-name">EnemyPlayer</div>
+            <div class="target-health-container">
+                <div class="target-health-bar" id="target-health-bar"></div>
+            </div>
+            <div class="target-meta">
+                Dist: <span id="target-dist">0.0m</span>
+            </div>
+            <div id="target-armor-display" class="target-armor"></div>
+        </div>
+
+        <!-- 11. Session Stats -->
+        <div id="hud-session-stats" class="hud-widget">
+            <div class="widget-header">Session Stats</div>
+            <div class="stat-line">Kills: <span id="session-kills">0</span></div>
+            <div class="stat-line">Deaths: <span id="session-deaths">0</span></div>
+            <div class="stat-line">K/D: <span id="session-kd">0.00</span></div>
+            <div class="stat-line">Streak: <span id="session-streak">0</span></div>
+        </div>
+
+        <!-- 12. Server Stats -->
+        <div id="hud-server-stats" class="hud-widget">
+            <div class="widget-header">Server Info</div>
+            <div id="server-name" class="server-title">Hypixel</div>
+            <div id="server-ip" class="server-sub">mc.hypixel.net</div>
+            <div class="server-meta">Players: <span id="server-players">0</span></div>
+        </div>
+
+        <!-- 13. Movement Stats -->
+        <div id="hud-movement-stats" class="hud-widget">
+            <div class="widget-header">Movement</div>
+            <div>Velocity: <span id="movement-velocity">0.00 m/s</span></div>
+            <div>Fall Dist: <span id="movement-falldist">0.0m</span></div>
+        </div>
+
+        <!-- 14. Bedwars / Skywars Stats -->
+        <div id="hud-bedwars-stats" class="hud-widget">
+            <div class="widget-header">Bedwars</div>
+            <div class="stat-line">Beds: <span class="bed-broken">0</span></div>
+            <div class="stat-line">Finals: <span class="finals-count">0</span></div>
+        </div>
+
+        <!-- 15. Scoreboard -->
+        <div id="hud-scoreboard" class="hud-widget">
+            <div id="scoreboard-lines-container"></div>
+        </div>
+
+        <!-- 16. Utility Widgets -->
+        <div id="hud-utility-widgets" class="hud-widget">
+            <span id="utility-time">12:00</span> | <span id="utility-day">Day 1</span> | <span id="utility-weather">Clear</span>
+        </div>
+    </div>
+
+    <!-- Animation Toast Container -->
+    <div id="anim-toast-container" class="anim-toast-container"></div>
+
+    <!-- Time Control Overlay -->
+    <div id="time-control-overlay" class="control-overlay hidden">
+        <div class="control-overlay-card">
+            <div class="control-overlay-header">
+                <span class="control-overlay-title"> Time Control</span>
+                <button class="control-overlay-close" onclick="closeTimeControlOverlay()"></button>
+            </div>
+            <div class="control-overlay-body">
+                <div class="time-preset-grid">
+                    <button class="time-preset-btn" onclick="setGameTime(0)">
+                        <span class="preset-icon"></span>
+                        <span>Midnight</span>
+                        <span class="preset-time">00:00</span>
+                    </button>
+                    <button class="time-preset-btn" onclick="setGameTime(1000)">
+                        <span class="preset-icon"></span>
+                        <span>Sunrise</span>
+                        <span class="preset-time">07:00</span>
+                    </button>
+                    <button class="time-preset-btn" onclick="setGameTime(6000)">
+                        <span class="preset-icon"></span>
+                        <span>Noon</span>
+                        <span class="preset-time">12:00</span>
+                    </button>
+                    <button class="time-preset-btn" onclick="setGameTime(13000)">
+                        <span class="preset-icon"></span>
+                        <span>Sunset</span>
+                        <span class="preset-time">19:00</span>
+                    </button>
+                    <button class="time-preset-btn" onclick="setGameTime(18000)">
+                        <span class="preset-icon"></span>
+                        <span>Night</span>
+                        <span class="preset-time">00:00</span>
+                    </button>
+                </div>
+                <div class="time-fine-control">
+                    <div class="overlay-slider-row">
+                        <span class="overlay-slider-label-left"> 00:00</span>
+                        <input type="range" id="overlay-time-slider" class="overlay-time-slider" min="0" max="24000" value="6000" step="50" oninput="onTimeSliderChange(this.value)">
+                        <span class="overlay-slider-label-right">23:59 </span>
+                    </div>
+                    <div class="overlay-time-display">
+                        <span id="overlay-time-slider-label" class="overlay-time-big">12:00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Weather Control Overlay -->
+    <div id="weather-control-overlay" class="control-overlay hidden">
+        <div class="control-overlay-card">
+            <div class="control-overlay-header">
+                <span class="control-overlay-title"> Weather Control</span>
+                <button class="control-overlay-close" onclick="closeWeatherControlOverlay()"></button>
+            </div>
+            <div class="control-overlay-body">
+                <div class="weather-big-grid">
+                    <button class="weather-big-btn" id="overlay-weather-btn-clear" onclick="setGameWeather('clear')">
+                        <span class="weather-big-icon"></span>
+                        <span class="weather-big-label">Clear</span>
+                        <span class="weather-big-desc">Sunny skies, no precipitation</span>
+                    </button>
+                    <button class="weather-big-btn" id="overlay-weather-btn-rain" onclick="setGameWeather('rain')">
+                        <span class="weather-big-icon"></span>
+                        <span class="weather-big-label">Rain</span>
+                        <span class="weather-big-desc">Rainfall, reduced visibility</span>
+                    </button>
+                    <button class="weather-big-btn" id="overlay-weather-btn-thunder" onclick="setGameWeather('thunder')">
+                        <span class="weather-big-icon"></span>
+                        <span class="weather-big-label">Thunder</span>
+                        <span class="weather-big-desc">Lightning strikes, dark skies</span>
+                    </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+    <!-- HUD Layout Editor Banner -->
+    <div id="hud-edit-banner" class="hud-edit-banner hidden">
+        <div class="banner-content">
+            <span class="banner-title">HUD Layout Editor</span>
+            <span class="banner-sep">|</span>
+            <span class="banner-desc">Drag widgets to position  Mouse wheel to scale</span>
+            <span class="banner-sep">|</span>
+            <button class="banner-btn" onclick="exitHudEditMode()">Save & Exit</button>
+        </div>
+    </div>
+
+    <!-- HUD Configuration Panel (Centered Settings Card) -->
+    <div id="overlay-settings-panel" class="hidden">
+        <div class="fugo-hub">
+            <!-- Sidebar -->
+            <aside class="fugo-sidebar">
+                <div class="sidebar-header">
+                    <div class="mountain-logo">
+                        <svg class="mountain-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M3 20h18L12 4z" />
+                            <path d="M12 4v16M8 12h8" opacity="0.3" />
+                        </svg>
+                        <span>FUGO <span>HUB</span></span>
+                    </div>
+                </div>
+                <nav class="sidebar-nav">
+                    <button class="nav-item active" data-app="recipes" onclick="switchHubApp('recipes')">
+                        <span>Recipes</span>
+                    </button>
+                    <button class="nav-item" data-app="gallery" onclick="switchHubApp('gallery')">
+                        <span>Screenshots & Replays</span>
+                    </button>
+                    <button class="nav-item" data-app="huds" onclick="switchHubApp('huds')">
+                        <span>HUDs</span>
+                    </button>
+                    <button class="nav-item" data-app="crosshair" onclick="switchHubApp('crosshair')">
+                        <span>Crosshair & Customization</span>
+                    </button>
+                    <button class="nav-item" data-app="profiles" onclick="switchHubApp('profiles')">
+                        <span>Profiles</span>
+                    </button>
+                </nav>
+                <div class="sidebar-footer">
+                    <div class="client-status">
+                        <span class="status-indicator"></span>
+                        <span>Companion Mode</span>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main Panel -->
+            <div class="fugo-main">
+                <!-- Top Bar -->
+                <header class="fugo-topbar">
+                    <div class="topbar-search">
+                        <input type="text" id="hub-search-input" placeholder="Search guides, items, mods..." oninput="handleHubSearch()">
+                    </div>
+                    <div class="topbar-right">
+                        <div class="world-status">
+                            <span class="status-icon"></span>
+                            <span id="hub-server-status-text">Singleplayer</span>
+                        </div>
+                        <div class="player-profile" onclick="switchHubApp('profiles')">
+                            <div class="player-avatar-wrapper">
+                                <span class="avatar-fallback"></span>
+                            </div>
+                            <span id="hub-username-text" class="player-name">Player</span>
+                        </div>
+                        <div class="quick-actions">
+                            <button class="action-btn" title="Edit HUD Layout" onclick="enterHudEditMode()"></button>
+                            <button class="action-btn" title="Reset HUD Positions" onclick="resetHUDPositions()"></button>
+                            <button class="action-btn close-hub-btn" onclick="closeHubSettings()">×</button>
+                        </div>
+                    </div>
+                </header>
+
+                <!-- Content Area -->
+                <div class="fugo-content">
+                    <!-- Recipes Screen -->
+                    <div id="hub-app-recipes" class="hub-app-panel">
+                        <div class="recipes-layout">
+                            <div class="recipes-sidebar">
+                                <div class="recipes-categories">
+                                    <button class="recipe-cat-btn active" id="recipe-cat-all" onclick="filterRecipes('all')">All</button>
+                                    <button class="recipe-cat-btn" id="recipe-cat-blocks" onclick="filterRecipes('blocks')">Blocks</button>
+                                    <button class="recipe-cat-btn" id="recipe-cat-tools" onclick="filterRecipes('tools')">Tools</button>
+                                    <button class="recipe-cat-btn" id="recipe-cat-combat" onclick="filterRecipes('combat')">Combat</button>
+                                    <button class="recipe-cat-btn" id="recipe-cat-redstone" onclick="filterRecipes('redstone')">Redstone</button>
+                                </div>
+                                <div class="recipes-list" id="recipes-list-container">
+                                    <!-- Populated dynamically via JS -->
+                                </div>
+                            </div>
+                            <div class="recipes-detail">
+                                <div id="recipe-detail-empty" class="detail-empty">
+                                    <span style="font-size:3rem;"></span>
+                                    <h3>Select a Recipe</h3>
+                                    <p>Browse or search recipes in the list to view their crafting layout and ingredients.</p>
+                                </div>
+                                <div id="recipe-detail-content" class="detail-content hidden">
+                                    <h3 id="recipe-item-name">Diamond Sword</h3>
+                                    <div class="crafting-section">
+                                        <div class="crafting-grid-3x3">
+                                            <div class="grid-cell" id="craft-cell-0"></div>
+                                            <div class="grid-cell" id="craft-cell-1"></div>
+                                            <div class="grid-cell" id="craft-cell-2"></div>
+                                            <div class="grid-cell" id="craft-cell-3"></div>
+                                            <div class="grid-cell" id="craft-cell-4"></div>
+                                            <div class="grid-cell" id="craft-cell-5"></div>
+                                            <div class="grid-cell" id="craft-cell-6"></div>
+                                            <div class="grid-cell" id="craft-cell-7"></div>
+                                            <div class="grid-cell" id="craft-cell-8"></div>
+                                        </div>
+                                        <div class="crafting-arrow"></div>
+                                        <div class="crafting-result-cell" id="craft-result"></div>
+                                    </div>
+                                    <div class="recipe-info-panel">
+                                        <h4>Ingredients</h4>
+                                        <ul id="recipe-ingredients-list"></ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Gallery / Screenshots Screen -->
+                    <div id="hub-app-gallery" class="hub-app-panel hidden" style="overflow-y: auto; max-height: 100%;">
+                        <div class="gallery-workspace">
+                            <div class="gallery-tab-header">
+                                <div class="gallery-tabs">
+                                    <button class="gallery-tab-btn active" id="gallery-tab-screenshots-btn" onclick="switchGalleryTab('screenshots')">Screenshots</button>
+                                    <button class="gallery-tab-btn" id="gallery-tab-replays-btn" onclick="switchGalleryTab('replays')">Replays</button>
+                                </div>
+                                <div class="gallery-actions">
+                                    <button class="gallery-action-btn" onclick="openGalleryFolder()">Open Folder </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Screenshots Grid -->
+                            <div class="gallery-section" id="gallery-sec-screenshots">
+                                <div class="gallery-grid" id="gallery-grid-screenshots">
+                                    <!-- Populated dynamically via JS -->
+                                </div>
+                                <div class="empty-state hidden" id="gallery-empty-screenshots">
+                                    <span style="font-size: 3rem;"></span>
+                                    <p style="margin-top: 0.5rem; opacity: 0.7;">No screenshots found. Press F2 in-game to take a screenshot!</p>
+                                </div>
+                            </div>
+
+                            <!-- Replays Grid/List -->
+                            <div class="gallery-section hidden" id="gallery-sec-replays">
+                                <div class="gallery-list" id="gallery-list-replays">
+                                    <!-- Populated dynamically via JS -->
+                                </div>
+                                <div class="empty-state hidden" id="gallery-empty-replays">
+                                    <span style="font-size: 3rem;"></span>
+                                    <p style="margin-top: 0.5rem; opacity: 0.7;">No replays found. Start recording in-game to save replays!</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- HUDs Screen -->
+                    <div id="hub-app-huds" class="hub-app-panel hidden">
+                        <div class="mods-filter-bar">
+                            <div class="category-selector">
+                                <button class="cat-btn active" onclick="filterMods('all')">ALL</button>
+                                <button class="cat-btn" onclick="filterMods('hud')">HUD</button>
+                                <button class="cat-btn" onclick="filterMods('server')">SERVER</button>
+                                <button class="cat-btn" onclick="filterMods('mechanic')">MECHANIC</button>
+                            </div>
+                            <div class="search-container">
+                                <span class="search-icon"></span>
+                                <input type="text" id="mods-search-input" placeholder="Search mods..." oninput="handleModsSearch()">
+                            </div>
+                        </div>
+                        <div class="mods-grid" id="mods-grid-container">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+
+                    <!-- CROSSHAIR Screen -->
+                    <div id="hub-app-crosshair" class="hub-app-panel hidden" style="overflow-y: auto; max-height: 100%; padding-right: 0.5rem;">
+                        <div class="settings-group-panel" style="margin-bottom: 1.5rem;">
+                            <div class="panel-section-title">Crosshair Configuration</div>
+                            <div class="settings-group">
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Style</span>
+                                    <div class="style-selector" id="crosshair-style-selector">
+                                        <button class="style-option active" data-value="cross" onclick="setCrosshairStyle('cross')">Cross</button>
+                                        <button class="style-option" data-value="dot" onclick="setCrosshairStyle('dot')">Dot</button>
+                                        <button class="style-option" data-value="circle" onclick="setCrosshairStyle('circle')">Circle</button>
+                                        <button class="style-option" data-value="diamond" onclick="setCrosshairStyle('diamond')">Diamond</button>
+                                        <button class="style-option" data-value="square" onclick="setCrosshairStyle('square')">Square</button>
+                                        <button class="style-option" data-value="t-shape" onclick="setCrosshairStyle('t-shape')">T-Shape</button>
+                                        <button class="style-option" data-value="cross-dot" onclick="setCrosshairStyle('cross-dot')">Cross Dot</button>
+                                        <button class="style-option" data-value="arrow" onclick="setCrosshairStyle('arrow')">Arrow</button>
+                                    </div>
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Size: <span id="val-crosshair-size">12px</span></span>
+                                    <input type="range" id="crosshair-size" min="4" max="36" value="12" oninput="updateCrosshairConfig()">
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Gap: <span id="val-crosshair-gap">4px</span></span>
+                                    <input type="range" id="crosshair-gap" min="0" max="20" value="4" oninput="updateCrosshairConfig()">
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Thickness: <span id="val-crosshair-thickness">2px</span></span>
+                                    <input type="range" id="crosshair-thickness" min="1" max="10" value="2" oninput="updateCrosshairConfig()">
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Color</span>
+                                    <div class="color-picker-container">
+                                        <div class="color-palette" id="crosshair-color-palette">
+                                            <button class="color-swatch active" style="background-color: #ff3b1f;" data-value="#ff3b1f" onclick="selectCrosshairColor('#ff3b1f')"></button>
+                                            <button class="color-swatch" style="background-color: #ff7a00;" data-value="#ff7a00" onclick="selectCrosshairColor('#ff7a00')"></button>
+                                            <button class="color-swatch" style="background-color: #ffd600;" data-value="#ffd600" onclick="selectCrosshairColor('#ffd600')"></button>
+                                            <button class="color-swatch" style="background-color: #00e676;" data-value="#00e676" onclick="selectCrosshairColor('#00e676')"></button>
+                                            <button class="color-swatch" style="background-color: #00e5ff;" data-value="#00e5ff" onclick="selectCrosshairColor('#00e5ff')"></button>
+                                            <button class="color-swatch" style="background-color: #2979ff;" data-value="#2979ff" onclick="selectCrosshairColor('#2979ff')"></button>
+                                            <button class="color-swatch" style="background-color: #d500f9;" data-value="#d500f9" onclick="selectCrosshairColor('#d500f9')"></button>
+                                            <button class="color-swatch" style="background-color: #ffffff;" data-value="#ffffff" onclick="selectCrosshairColor('#ffffff')"></button>
+                                        </div>
+                                        <div class="hex-input-group">
+                                            <span class="hex-prefix">#</span>
+                                            <input type="text" id="crosshair-hex-input" class="hex-input" placeholder="FF3B1F" maxlength="6" oninput="updateCrosshairHex(this.value)">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-group-panel">
+                            <div class="panel-section-title">Animations & Visual Customization</div>
+                            <div class="settings-group">
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Block Hitting Animation Style</span>
+                                    <div class="style-selector" id="anim-block-hitting">
+                                        <button class="style-option active" data-value="1.7" onclick="setCustomizationSetting('block-hitting', '1.7')">1.7 Style</button>
+                                        <button class="style-option" data-value="1.8" onclick="setCustomizationSetting('block-hitting', '1.8')">1.8 Style</button>
+                                        <button class="style-option" data-value="modern" onclick="setCustomizationSetting('block-hitting', 'modern')">Modern 1.20+</button>
+                                    </div>
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Damage Tilt Effect</span>
+                                    <div class="style-selector" id="anim-damage-tilt">
+                                        <button class="style-option active" data-value="classic" onclick="setCustomizationSetting('damage-tilt', 'classic')">Classic Tilt</button>
+                                        <button class="style-option" data-value="shake" onclick="setCustomizationSetting('damage-tilt', 'shake')">Enhanced Shake</button>
+                                        <button class="style-option" data-value="none" onclick="setCustomizationSetting('damage-tilt', 'none')">Disabled</button>
+                                    </div>
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Camera Zoom Transition</span>
+                                    <div class="style-selector" id="anim-zoom">
+                                        <button class="style-option active" data-value="cinematic" onclick="setCustomizationSetting('zoom', 'cinematic')">Cinematic</button>
+                                        <button class="style-option" data-value="linear" onclick="setCustomizationSetting('zoom', 'linear')">Linear</button>
+                                        <button class="style-option" data-value="instant" onclick="setCustomizationSetting('zoom', 'instant')">Instant</button>
+                                    </div>
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">HUD Border Style</span>
+                                    <div class="style-selector" id="custom-hud-border">
+                                        <button class="style-option active" data-value="glass" onclick="setCustomizationSetting('hud-border', 'glass')">Glassmorphism</button>
+                                        <button class="style-option" data-value="neon" onclick="setCustomizationSetting('hud-border', 'neon')">Neon Glow</button>
+                                        <button class="style-option" data-value="thin" onclick="setCustomizationSetting('hud-border', 'thin')">Thin line</button>
+                                        <button class="style-option" data-value="none" onclick="setCustomizationSetting('hud-border', 'none')">None</button>
+                                    </div>
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Entity Hitbox Visibility</span>
+                                    <div class="style-selector" id="hitbox-visibility-selector">
+                                        <button class="style-option active" data-value="off" onclick="setHitboxVisibility('off')">Off</button>
+                                        <button class="style-option" data-value="aimed" onclick="setHitboxVisibility('aimed')">Aimed Target</button>
+                                        <button class="style-option" data-value="all" onclick="setHitboxVisibility('all')">All Entities</button>
+                                        <button class="style-option" data-value="all-blocks" onclick="setHitboxVisibility('all-blocks')">All + Blocks</button>
+                                    </div>
+                                </div>
+                                <div class="setting-item-col">
+                                    <span class="setting-label">Global UI Accent Color</span>
+                                    <div class="color-picker-container">
+                                        <div class="color-palette" id="ui-accent-color-palette">
+                                            <button class="color-swatch active" style="background-color: #ff7a00;" data-value="#ff7a00" onclick="selectGlobalAccentColor('#ff7a00')"></button>
+                                            <button class="color-swatch" style="background-color: #ff1744;" data-value="#ff1744" onclick="selectGlobalAccentColor('#ff1744')"></button>
+                                            <button class="color-swatch" style="background-color: #ffd600;" data-value="#ffd600" onclick="selectGlobalAccentColor('#ffd600')"></button>
+                                            <button class="color-swatch" style="background-color: #00e676;" data-value="#00e676" onclick="selectGlobalAccentColor('#00e676')"></button>
+                                            <button class="color-swatch" style="background-color: #00e5ff;" data-value="#00e5ff" onclick="selectGlobalAccentColor('#00e5ff')"></button>
+                                            <button class="color-swatch" style="background-color: #2979ff;" data-value="#2979ff" onclick="selectGlobalAccentColor('#2979ff')"></button>
+                                            <button class="color-swatch" style="background-color: #d500f9;" data-value="#d500f9" onclick="selectGlobalAccentColor('#d500f9')"></button>
+                                            <button class="color-swatch" style="background-color: #ff4081;" data-value="#ff4081" onclick="selectGlobalAccentColor('#ff4081')"></button>
+                                        </div>
+                                        <div class="hex-input-group">
+                                            <span class="hex-prefix">#</span>
+                                            <input type="text" id="ui-accent-hex-input" class="hex-input" placeholder="FF7A00" maxlength="6" oninput="updateGlobalAccentHex(this.value)">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PROFILES Screen -->
+                    <div id="hub-app-profiles" class="hub-app-panel hidden">
+                        <div class="accounts-tab-layout">
+                            <aside class="accounts-sidebar">
+                                <div class="sidebar-section">
+                                    <div class="sidebar-title">Profiles</div>
+                                    <div id="profiles-sidebar-list" class="profiles-sidebar-list">
+                                        <!-- Populated dynamically via JS -->
+                                    </div>
+                                </div>
+                            </aside>
+                            <div class="accounts-manager-main">
+                                <div class="settings-group-panel">
+                                    <div class="panel-section-title">Account Manager</div>
+                                    <div class="profile-add-form">
+                                        <div class="setting-item-col" style="margin-bottom: 0.8rem;">
+                                            <span class="setting-label">Account Type</span>
+                                            <div class="style-selector" id="profile-type-selector">
+                                                <button class="style-option active" data-value="offline" onclick="setProfileType('offline')">Offline</button>
+                                                <button class="style-option" data-value="microsoft" onclick="setProfileType('microsoft')">Microsoft</button>
+                                                <button class="style-option" data-value="alt" onclick="setProfileType('alt')">Custom Alt</button>
+                                            </div>
+                                        </div>
+                                        <div class="setting-item">
+                                            <span class="setting-label">Username</span>
+                                            <input type="text" id="profile-new-username" class="form-input" placeholder="Username">
+                                        </div>
+                                        <div id="profile-alt-inputs" class="hidden">
+                                            <div class="setting-item">
+                                                <span class="setting-label">UUID</span>
+                                                <input type="text" id="profile-new-uuid" class="form-input" placeholder="UUID (Optional)">
+                                            </div>
+                                            <div class="setting-item">
+                                                <span class="setting-label">Token</span>
+                                                <input type="text" id="profile-new-token" class="form-input" placeholder="Auth Token (Optional)">
+                                            </div>
+                                        </div>
+                                        
+                                        <div id="profile-auth-status" class="auth-status-msg"></div>
+                                        
+                                        <button id="btn-add-profile-action" class="btn btn-primary btn-full" onclick="handleAddProfile()">Add Profile</button>
+                                        <button id="btn-ms-login-action" class="btn btn-secondary btn-full hidden" onclick="handleMicrosoftLogin()">Login with Microsoft</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- HUD Options Modal -->
+    <div id="hud-options-modal" class="modal-backdrop hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <span id="modal-hud-title" class="modal-title">HUD Options</span>
+                <button class="modal-close-btn" onclick="closeHudOptionsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-item-col">
+                    <span class="setting-label">Scale (<span id="modal-hud-scale-val">100</span>%)</span>
+                    <input type="range" id="modal-hud-scale-slider" min="50" max="200" step="5" class="range-slider" oninput="updateModalScale(this.value)">
+                </div>
+                
+                <div class="setting-item-col" id="modal-color-option-container">
+                    <span class="setting-label">Accent Color</span>
+                    <div style="display: flex; gap: 0.5rem; align-items: center; width: 100%;">
+                        <input type="color" id="modal-hud-color-picker" class="color-picker" oninput="updateModalColor(this.value)">
+                        <input type="text" id="modal-hud-color-text" class="form-input" style="flex: 1; margin: 0; font-family: monospace;" placeholder="#FFFFFF" oninput="updateModalColor(this.value)">
+                    </div>
+                </div>
+
+                <!-- Custom options slots -->
+                <div id="modal-custom-options" class="setting-item-col">
+                    <!-- Dynamic content per HUD type -->
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="resetModalHudPosition()">Reset Position</button>
+                    <button class="btn btn-primary" onclick="saveModalHudOptions()">Save Settings</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Screenshot Lightbox Modal -->
+    <div id="gallery-lightbox" class="modal-backdrop hidden" onclick="closeLightbox()" style="z-index: 10010; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);">
+        <span class="modal-close-btn" style="position: absolute; top: 1.5rem; right: 2rem; font-size: 2.5rem; color: #fff; cursor: pointer; z-index: 10011;" onclick="closeLightbox()">&times;</span>
+        <div class="lightbox-content" onclick="event.stopPropagation()" style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <img id="lightbox-img" src="" alt="Screenshot" style="max-width: 90vw; max-height: 80vh; border-radius: 8px; border: 2px solid rgba(255,255,255,0.15); box-shadow: 0 10px 30px rgba(0,0,0,0.5); object-fit: contain;">
+            <div id="lightbox-meta" style="color: #fff; margin-top: 1rem; text-align: center; font-size: 1rem; font-weight: 500; text-shadow: 0 2px 4px rgba(0,0,0,0.5);"></div>
+        </div>
+    </div>
+
+    <!-- Custom Crosshair -->
+    <div id="custom-crosshair">
+        <div id="crosshair-element"></div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+        console.log("HUD loaded successfully");
+    </script>
+</body>
+</html>

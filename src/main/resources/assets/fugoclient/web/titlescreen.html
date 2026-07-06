@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fugo Title Screen</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- The Title Screen Layout -->
+    <div id="title-screen-container" class="ui-container">
+        <!-- Top Left Logo Section -->
+        <div class="top-left-logo">
+            <img src="minecraft.ico" class="title-logo-img" alt="Minecraft Logo">
+            <h1 class="logo-text">FU<span>GO</span></h1>
+        </div>
+
+        <!-- Top Right Profiles Button -->
+        <button class="title-profiles-btn" onclick="openAccountManager()">
+            <span class="profiles-icon">👤</span>
+            <span id="title-profile-name">Loading...</span>
+        </button>
+
+        <!-- Mid Left Glass Panel Menu -->
+        <main class="mid-left-panel">
+            <div class="menu-buttons-panel">
+                <button class="btn-singleplayer" onclick="triggerAction('singleplayer')">
+                    <span class="btn-icon">▶</span>
+                    <span class="btn-text">Singleplayer</span>
+                </button>
+                <button class="btn-multiplayer" onclick="triggerAction('multiplayer')">
+                    <span class="btn-icon">⬡</span>
+                    <span class="btn-text">Multiplayer</span>
+                </button>
+                <button class="btn-settings" onclick="triggerAction('options')">
+                    <span class="btn-icon">⚙</span>
+                    <span class="btn-text">Settings</span>
+                    <span class="btn-arrow">›</span>
+                </button>
+                <button class="btn-quit" onclick="triggerAction('quit')">
+                    <span class="btn-icon">✕</span>
+                    <span class="btn-text">Quit Game</span>
+                </button>
+            </div>
+        </main>
+
+        <!-- Bottom Left Quick Join Panel -->
+        <div class="bottom-left-quickjoin">
+            <div id="quickjoin-list" class="quickjoin-list">
+                <button class="btn-quickjoin-add" onclick="showAddServerModal()" title="Add Server to Quick Join">+</button>
+            </div>
+        </div>
+
+        <!-- Add Server Popover Modal -->
+        <div id="add-server-modal" class="add-server-modal-overlay hidden" onclick="hideAddServerModal()">
+            <div class="add-server-card" onclick="event.stopPropagation()">
+                <h3>Add Quick Join</h3>
+                <input type="text" id="add-server-name" placeholder="Server Name (e.g., Hypixel)" />
+                <input type="text" id="add-server-ip" placeholder="Server IP (e.g., hypixel.net)" />
+                <div class="add-server-actions">
+                    <button class="btn-add-server-cancel" onclick="hideAddServerModal()">Cancel</button>
+                    <button class="btn-add-server-confirm" onclick="confirmAddServer()">Add</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Account Manager Modal/Overlay -->
+        <div id="account-manager-modal" class="account-modal-overlay hidden">
+            <div class="account-modal-card">
+                <div class="account-modal-header">
+                    <h2>Account Manager</h2>
+                    <button class="close-modal-btn" onclick="closeAccountManager()">✕</button>
+                </div>
+                
+                <!-- Active Account Banner -->
+                <div class="active-account-banner">
+                    <span class="banner-label">Active Session:</span>
+                    <span id="modal-active-user" class="banner-user">Loading...</span>
+                </div>
+
+                <!-- Account List -->
+                <div class="account-list-container">
+                    <h3>Switch Account</h3>
+                    <div id="modal-account-list" class="modal-account-list">
+                        <!-- Populated dynamically via JS -->
+                    </div>
+                </div>
+
+                <!-- Add Account Form -->
+                <div class="add-account-section">
+                    <h3>Add Account</h3>
+                    <div class="add-account-inputs">
+                        <input type="text" id="new-account-username" placeholder="Username / Email" />
+                        <div class="add-account-actions">
+                            <button class="modal-btn modal-btn-offline" onclick="addModalAccount('offline')">
+                                ➕ Add Offline
+                            </button>
+                            <button class="modal-btn modal-btn-microsoft" onclick="addModalAccount('microsoft')">
+                                🌐 Add Microsoft
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+        console.log("Titlescreen loaded successfully");
+        const btns = document.querySelectorAll('.btn');
+        btns.forEach(btn => {
+            btn.style.opacity = '0.9';
+            btn.addEventListener('mouseenter', function() {
+                this.style.opacity = '1';
+            });
+            btn.addEventListener('mouseleave', function() {
+                this.style.opacity = '0.9';
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "fugoclient",
+  "version": "${version}",
+  "name": "Fugo Client",
+  "description": "Fugo Client is a Minecraft client mod replacing the title screen and adding overlays with an embedded Chromium browser.",
+  "authors": [
+    "Antigravity"
+  ],
+  "contact": {
+    "homepage": "https://github.com/fugoclient"
+  },
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "io.github.fugoclient.mcefmod.MCEFMod"
+    ]
+  },
+  "mixins": [
+    "fugoclient.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.17.3",
+    "minecraft": ">=1.21.1",
+    "fabric-api": "*",
+    "mcef-modern": "*"
+  }
+}

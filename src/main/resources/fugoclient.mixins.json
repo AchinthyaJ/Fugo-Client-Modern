@@ -1,0 +1,29 @@
+{
+  "required": true,
+  "minMixinVersion": "0.8",
+  "package": "io.github.fugoclient.mcefmod.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [],
+  "client": [
+    "CameraMixin",
+    "TitleScreenMixin",
+    "DrawContextAccessor",
+    "ScissorStackMixin",
+    "InGameHudMixin",
+    "AbstractClientPlayerEntityMixin",
+    "KeyboardMixin",
+    "MouseMixin",
+    "MinecraftClientMixin",
+    "GameRendererMixin",
+    "LightmapTextureManagerMixin",
+    "LightmapTextureManagerAccessor",
+    "InactivityFpsLimiterMixin",
+    "ScreenMixin",
+    "GameMenuScreenMixin",
+    "LocalPlayerEntityMixin",
+    "ClientPlayerEntityAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
