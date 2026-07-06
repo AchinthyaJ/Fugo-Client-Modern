@@ -1,0 +1,24 @@
+# Gradle files
+.gradle/
+build/
+bin/
+
+# Minecraft development run directory
+run/
+
+# IDEA / VS Code IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Claude files
+.claude/
