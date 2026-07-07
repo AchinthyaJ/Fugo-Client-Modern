@@ -1,0 +1,24 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="fugoclient"
+version="${mod_version}"
+displayName="Fugo Client"
+description="Fugo Client is a Minecraft client mod replacing the title screen and adding overlays with an embedded Chromium browser."
+authors="Antigravity"
+
+[[dependencies.fugoclient]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.fugoclient]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.21)"
+ordering="NONE"
+side="CLIENT"

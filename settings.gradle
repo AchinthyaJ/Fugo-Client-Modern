@@ -1,9 +1,20 @@
 pluginManagement {
     repositories {
         maven { url = "https://maven.fabricmc.net/" }
+        maven { url = "https://maven.minecraftforge.net/" }
         mavenCentral()
         gradlePluginPortal()
     }
 }
 
-rootProject.name = 'fugoclient'
+rootProject.name = 'fugoclient-parent'
+
+// Dynamically include subprojects based on the Gradle version being run
+import org.gradle.util.GradleVersion
+
+if (GradleVersion.current().baseVersion < GradleVersion.version("9.0")) {
+    include 'fabric-1.20.1'
+    include 'forge-1.20.1'
+} else {
+    include 'fabric-1.21.11'
+}

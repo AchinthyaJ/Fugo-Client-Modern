@@ -17,9 +17,8 @@ import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.render.state.TexturedQuadGuiElementRenderState;
 import net.minecraft.client.texture.TextureSetup;
 import org.joml.Matrix3x2f;
-import net.minecraft.client.render.RenderTickCounter;
-
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.minecraft.client.gui.ScreenRect;
 
 public class MCEFMod implements ClientModInitializer {
 
@@ -27,38 +26,41 @@ public class MCEFMod implements ClientModInitializer {
     private static KeyBinding editKeybind;
     private static KeyBinding zoomKeybind;
 
+    // === ZERO-ALLOCATION RENDER PATH ===
+    private static final Matrix3x2f CACHED_MATRIX = new Matrix3x2f();
+    private static TexturedQuadGuiElementRenderState cachedRenderState = null;
+    private static GpuTextureView lastTextureView = null;
+    private static int lastRenderWidth = 0;
+    private static int lastRenderHeight = 0;
+    
+    // Throttle
+    private static int tickCounter = 0;
+    private static boolean wasInWorld = false;
+    
+    // Browser power saving - resize to 1x1 when overlay hidden to save GPU
+    private static boolean browserWasMinimized = false;
+    private static int fullWidth = 0;
+    private static int fullHeight = 0;
+
     @Override
     public void onInitializeClient() {
-        System.out.println("[Fugo Client] Initializing mod...");
-
-        // Initialize the browser manager
         WebUIManager.getInstance().init();
 
-        // Close browser on client stop to free memory immediately
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-            System.out.println("[Fugo Client] Closing browser and freeing memory...");
             WebUIManager.getInstance().close();
         });
 
-        // Register JVM shutdown hook to kill jcef_helper processes cleanly
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                System.out.println("[Fugo Client] JVM shutting down. Terminating any remaining jcef_helper processes...");
                 ProcessHandle.allProcesses()
                     .filter(p -> p.info().command().orElse("").contains("jcef_helper"))
-                    .forEach(p -> {
-                        try {
-                            p.destroyForcibly();
-                        } catch (Throwable ignore) {}
-                    });
+                    .forEach(p -> p.destroyForcibly());
             } catch (Throwable ignore) {}
         }));
 
-        // Auto-close title screen when entering a world
         net.fabricmc.fabric.api.client.screen.v1.ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             if (client.world != null && screen instanceof WebTitleScreen && !WebUIManager.isDisconnecting) {
-                WebTitleScreen titleScreen = (WebTitleScreen) screen;
-                if (!titleScreen.isOverlay()) {
+                if (!((WebTitleScreen) screen).isOverlay()) {
                     client.setScreen(null);
                 }
             }
@@ -66,7 +68,6 @@ public class MCEFMod implements ClientModInitializer {
 
         KeyBinding.Category category = KeyBinding.Category.create(Identifier.of("fugoclient", "keys"));
 
-        // Register Right Shift keybind to toggle the mods/modules overlay
         modsKeybind = KeyBindingHelper.registerKeyBinding(new KeyBinding(
             "key.fugoclient.toggle_mods", 
             InputUtil.Type.KEYSYM, 
@@ -74,7 +75,6 @@ public class MCEFMod implements ClientModInitializer {
             category
         ));
 
-        // Register H keybind to toggle HUD layout edit mode
         editKeybind = KeyBindingHelper.registerKeyBinding(new KeyBinding(
             "key.fugoclient.toggle_edit", 
             InputUtil.Type.KEYSYM, 
@@ -82,7 +82,6 @@ public class MCEFMod implements ClientModInitializer {
             category
         ));
 
-        // Register C keybind for zoom
         zoomKeybind = KeyBindingHelper.registerKeyBinding(new KeyBinding(
             "key.fugoclient.zoom", 
             InputUtil.Type.KEYSYM, 
@@ -90,8 +89,10 @@ public class MCEFMod implements ClientModInitializer {
             category
         ));
 
-        // Register client tick handler to poll the keybinding and update HUD data
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            tickCounter++;
+            boolean inWorld = client.world != null;
+            
             CustomTextureManager.tick();
 
             while (modsKeybind.wasPressed()) {
@@ -106,22 +107,53 @@ public class MCEFMod implements ClientModInitializer {
                 }
             }
 
-            if (client.world != null) {
+            if (inWorld) {
                 PvPTracker.tick(client.player);
-                io.github.fugoclient.mcefmod.Autoclicker.tick(client);
-                if (client.getWindow() != null) {
-                    double scale = client.getWindow().getScaleFactor();
-                    int width = client.getWindow().getScaledWidth();
-                    int height = client.getWindow().getScaledHeight();
-                    WebUIManager.getInstance().resize((int) (width * scale), (int) (height * scale));
+                Autoclicker.tick(client);
+                
+                if ((tickCounter % 10) == 0) {
                     WebUIManager.getInstance().updateHud();
+                    WebUIManager.getInstance().onStateChanged();
+                } else if ((tickCounter % 5) == 0) {
+                    WebUIManager.getInstance().onStateChanged();
+                }
+                
+                // Browser power saving: minimize browser when overlay hidden
+                MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
+                boolean overlayVisible = WebUIManager.getInstance().isOverlayVisible();
+                
+                if (browser != null && client.getWindow() != null) {
+                    if (!overlayVisible && !browserWasMinimized) {
+                        // Save full size and minimize browser to 1x1 to save GPU/CPU
+                        double scale = client.getWindow().getScaleFactor();
+                        fullWidth = (int)(client.getWindow().getScaledWidth() * scale);
+                        fullHeight = (int)(client.getWindow().getScaledHeight() * scale);
+                        browser.resize(1, 1);
+                        browserWasMinimized = true;
+                    } else if (overlayVisible && browserWasMinimized) {
+                        // Restore full size
+                        if (fullWidth > 0 && fullHeight > 0) {
+                            browser.resize(fullWidth, fullHeight);
+                        }
+                        browserWasMinimized = false;
+                    }
+                    
+                    // Normal resize check every 20 ticks
+                    if ((tickCounter % 20) == 0 && overlayVisible) {
+                        double scale = client.getWindow().getScaleFactor();
+                        int width = (int)(client.getWindow().getScaledWidth() * scale);
+                        int height = (int)(client.getWindow().getScaledHeight() * scale);
+                        WebUIManager.getInstance().resize(width, height);
+                    }
                 }
             }
-
-            WebUIManager.getInstance().onStateChanged();
+            
+            if (inWorld != wasInWorld) {
+                wasInWorld = inWorld;
+                WebUIManager.getInstance().onStateChanged();
+            }
         });
 
-        // Register Attack Callback to count combos/reach/target info
         net.fabricmc.fabric.api.event.player.AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
             if (world.isClient() && player.equals(MinecraftClient.getInstance().player)) {
                 PvPTracker.onAttack(entity);
@@ -129,12 +161,15 @@ public class MCEFMod implements ClientModInitializer {
             return net.minecraft.util.ActionResult.PASS;
         });
 
-        // Register HUD rendering callback - only render if overlay is visible
+        // ULTRA-LIGHTWEIGHT HUD RENDER - skips entirely when overlay hidden
         HudRenderCallback.EVENT.register((context, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.world == null || client.currentScreen instanceof WebTitleScreen) return;
 
-            MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
+            WebUIManager wm = WebUIManager.getInstance();
+            if (!wm.isOverlayVisible()) return;
+
+            MCEFBrowser browser = wm.getBrowser();
             if (browser == null) return;
 
             GpuTextureView gpuTextureView = browser.getTextureView();
@@ -143,20 +178,28 @@ public class MCEFMod implements ClientModInitializer {
             int width = client.getWindow().getScaledWidth();
             int height = client.getWindow().getScaledHeight();
 
+            if (gpuTextureView != lastTextureView || width != lastRenderWidth || height != lastRenderHeight || cachedRenderState == null) {
+                lastTextureView = gpuTextureView;
+                lastRenderWidth = width;
+                lastRenderHeight = height;
+                CACHED_MATRIX.set(context.getMatrices());
+
+                cachedRenderState = new TexturedQuadGuiElementRenderState(
+                    RenderPipelines.GUI_TEXTURED,
+                    TextureSetup.of(gpuTextureView, RenderSystem.getSamplerCache().get(FilterMode.LINEAR)),
+                    CACHED_MATRIX,
+                    0, 0, width, height, 0.0F, 1.0F, 0.0F, 1.0F, 0xFFFFFFFF,
+                    new ScreenRect(0, 0, width, height)
+                );
+            }
+
             io.github.fugoclient.mcefmod.mixin.DrawContextAccessor accessor =
                 (io.github.fugoclient.mcefmod.mixin.DrawContextAccessor) context;
-
-            accessor.getGuiRenderState().addSimpleElementToCurrentLayer(new TexturedQuadGuiElementRenderState(
-                RenderPipelines.GUI_TEXTURED,
-                TextureSetup.of(gpuTextureView, RenderSystem.getSamplerCache().get(FilterMode.LINEAR)),
-                new Matrix3x2f(context.getMatrices()),
-                0, 0, width, height, 0.0F, 1.0F, 0.0F, 1.0F, 0xFFFFFFFF,
-                new net.minecraft.client.gui.ScreenRect(0, 0, width, height)
-            ));
+            accessor.getGuiRenderState().addSimpleElementToCurrentLayer(cachedRenderState);
         });
     }
 
     public static boolean isZooming() {
-        return zoomKeybind != null && zoomKeybind.isPressed() && net.minecraft.client.MinecraftClient.getInstance().currentScreen == null;
+        return zoomKeybind != null && zoomKeybind.isPressed() && MinecraftClient.getInstance().currentScreen == null;
     }
 }

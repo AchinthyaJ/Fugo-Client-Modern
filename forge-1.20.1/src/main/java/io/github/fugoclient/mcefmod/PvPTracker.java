@@ -1,10 +1,12 @@
 package io.github.fugoclient.mcefmod;
 
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.registry.Registries;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.core.registries.BuiltInRegistries;
 
 public class PvPTracker {
     private static int combo = 0;
@@ -26,36 +28,42 @@ public class PvPTracker {
     private static boolean wasDead = false;
 
     public static void onAttack(Entity target) {
-        if (!(target instanceof LivingEntity)) return;
-        
-        LivingEntity living = (LivingEntity) target;
-        long now = System.currentTimeMillis();
-        
-        combo = (now - lastHitTime <= 3000) ? combo + 1 : 1;
-        lastHitTime = now;
-        
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player != null) {
-            reach = client.player.distanceTo(target);
+        if (target instanceof LivingEntity) {
+            LivingEntity living = (LivingEntity) target;
+            long now = System.currentTimeMillis();
+            
+            if (now - lastHitTime <= 3000) {
+                combo++;
+            } else {
+                combo = 1;
+            }
+            
+            lastHitTime = now;
+            
+            Minecraft client = Minecraft.getInstance();
+            if (client.player != null) {
+                reach = client.player.distanceTo(target);
+            }
+            
+            targetId = target.getId();
+            targetName = target.getName().getString();
+            targetHealth = living.getHealth();
+            targetMaxHealth = living.getMaxHealth();
+            targetDistance = reach;
+            
+            for (int i = 0; i < 4; i++) {
+                EquipmentSlot slot;
+                switch (i) {
+                    case 0: slot = EquipmentSlot.FEET; break;
+                    case 1: slot = EquipmentSlot.LEGS; break;
+                    case 2: slot = EquipmentSlot.CHEST; break;
+                    default: slot = EquipmentSlot.HEAD; break;
+                }
+                ItemStack armorStack = living.getItemBySlot(slot);
+                targetArmor[i] = armorStack.isEmpty() ? "" : BuiltInRegistries.ITEM.getKey(armorStack.getItem()).getPath();
+            }
+            lastTargetTime = now;
         }
-        
-        targetId = target.getId();
-        targetName = target.getName().getString();
-        targetHealth = living.getHealth();
-        targetMaxHealth = living.getMaxHealth();
-        targetDistance = reach;
-        
-        // Pre-allocate equipment slot array for faster iteration
-        targetArmor[0] = armorToId(living.getEquippedStack(EquipmentSlot.FEET));
-        targetArmor[1] = armorToId(living.getEquippedStack(EquipmentSlot.LEGS));
-        targetArmor[2] = armorToId(living.getEquippedStack(EquipmentSlot.CHEST));
-        targetArmor[3] = armorToId(living.getEquippedStack(EquipmentSlot.HEAD));
-        
-        lastTargetTime = now;
-    }
-
-    private static String armorToId(net.minecraft.item.ItemStack stack) {
-        return stack.isEmpty() ? "" : Registries.ITEM.getId(stack.getItem()).getPath();
     }
 
     public static void onDeath() {
@@ -64,24 +72,22 @@ public class PvPTracker {
         currentStreak = 0;
     }
 
-    public static void tick(net.minecraft.client.network.ClientPlayerEntity player) {
+    public static void tick(LocalPlayer player) {
         if (player == null) return;
         
-        // 1. Detect death
-        boolean isDead = player.isDead() || player.getHealth() <= 0;
+        boolean isDead = !player.isAlive() || player.getHealth() <= 0.0f;
         if (isDead && !wasDead) {
             onDeath();
         }
         wasDead = isDead;
 
-        // 2. Simple kill detector (skip if no target or expired)
-        if (lastTargetTime > 0 && targetId != -1 && System.currentTimeMillis() - lastTargetTime < 5000) {
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client.world != null) {
-                Entity e = client.world.getEntityById(targetId);
+        if (lastTargetTime > 0 && System.currentTimeMillis() - lastTargetTime < 5000 && targetId != -1) {
+            Minecraft client = Minecraft.getInstance();
+            if (client.level != null) {
+                Entity e = client.level.getEntity(targetId);
                 if (e instanceof LivingEntity) {
                     LivingEntity living = (LivingEntity) e;
-                    if (living.isDead() || living.getHealth() <= 0) {
+                    if (!living.isAlive() || living.getHealth() <= 0.0f) {
                         kills++;
                         currentStreak++;
                         if (currentStreak > winStreak) {

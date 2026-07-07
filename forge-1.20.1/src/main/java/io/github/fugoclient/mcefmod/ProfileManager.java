@@ -2,8 +2,9 @@ package io.github.fugoclient.mcefmod;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.session.Session;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.User;
+import io.github.fugoclient.mcefmod.MinecraftClientAccessor;
 
 import java.io.*;
 import java.net.URI;
@@ -19,15 +20,13 @@ public class ProfileManager {
     private List<Profile> profiles = new ArrayList<>();
     private final Gson gson = new Gson();
     private final HttpClient httpClient = HttpClient.newHttpClient();
-    private long lastLoadTime = 0;
-    private static final long RELOAD_INTERVAL_MS = 5000;
 
     public static ProfileManager getInstance() {
         return INSTANCE;
     }
 
     private ProfileManager() {
-        this.profilesFile = new File(MinecraftClient.getInstance().runDirectory, "fugo_profiles.json");
+        this.profilesFile = new File(Minecraft.getInstance().gameDirectory, "fugo_profiles.json");
         loadProfiles();
     }
 
@@ -35,7 +34,7 @@ public class ProfileManager {
         public String username;
         public String uuid;
         public String accessToken;
-        public String type;
+        public String type; // "offline", "alt", "microsoft"
 
         public Profile(String username, String uuid, String accessToken, String type) {
             this.username = username;
@@ -46,28 +45,27 @@ public class ProfileManager {
     }
 
     public synchronized void loadProfiles() {
-        long now = System.currentTimeMillis();
-        if (now - lastLoadTime < RELOAD_INTERVAL_MS && !profiles.isEmpty()) {
-            return; // Throttle reloads
-        }
-        lastLoadTime = now;
-        
         if (!profilesFile.exists()) {
             profiles = new ArrayList<>();
             return;
         }
-        try (Reader reader = new FileReader(profilesFile, StandardCharsets.UTF_8)) {
-            List<Profile> loaded = gson.fromJson(reader, new TypeToken<List<Profile>>(){}.getType());
-            profiles = loaded != null ? loaded : new ArrayList<>();
+        try (Reader reader = new FileReader(profilesFile)) {
+            profiles = gson.fromJson(reader, new TypeToken<List<Profile>>(){}.getType());
+            if (profiles == null) {
+                profiles = new ArrayList<>();
+            }
         } catch (Exception e) {
+            e.printStackTrace();
             profiles = new ArrayList<>();
         }
     }
 
     public synchronized void saveProfiles() {
-        try (Writer writer = new FileWriter(profilesFile, StandardCharsets.UTF_8)) {
+        try (Writer writer = new FileWriter(profilesFile)) {
             gson.toJson(profiles, writer);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     public List<Profile> getProfiles() {
@@ -96,23 +94,30 @@ public class ProfileManager {
 
         if (target != null) {
             try {
-                UUID playerUuid = UUID.fromString(target.uuid);
-                Session session = new Session(
+                User.Type type = User.Type.byName(target.type);
+                if (type == null) {
+                    type = User.Type.MOJANG;
+                }
+                User session = new User(
                     target.username,
-                    playerUuid,
+                    target.uuid,
                     target.accessToken,
                     Optional.empty(),
-                    Optional.empty()
+                    Optional.empty(),
+                    type
                 );
-                ((MinecraftClientAccessor) MinecraftClient.getInstance()).setSession(session);
+                ((MinecraftClientAccessor) Minecraft.getInstance()).setSession(session);
+                System.out.println("[ProfileManager] Switched session to: " + target.username + " (" + target.type + ")");
                 return true;
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
         return false;
     }
 
     public Profile authenticateMicrosoft(String code) throws Exception {
-        String tokenBody = String.format(java.util.Locale.US,
+        String tokenBody = String.format(
             "client_id=00000000402b5328&code=%s&grant_type=authorization_code&redirect_uri=https://login.live.com/oauth20_desktop.srf",
             code
         );
@@ -125,7 +130,10 @@ public class ProfileManager {
         HttpResponse<String> tokenResponse = httpClient.send(tokenRequest, HttpResponse.BodyHandlers.ofString());
         Map<String, Object> tokenMap = gson.fromJson(tokenResponse.body(), new TypeToken<Map<String, Object>>(){}.getType());
         String msAccessToken = (String) tokenMap.get("access_token");
-        if (msAccessToken == null) throw new RuntimeException("Microsoft Auth Failed: No access token returned.");
+
+        if (msAccessToken == null) {
+            throw new RuntimeException("Microsoft Auth Failed: No access token returned.");
+        }
 
         Map<String, Object> xblProps = new HashMap<>();
         xblProps.put("AuthMethod", "RPS");
@@ -147,9 +155,9 @@ public class ProfileManager {
         HttpResponse<String> xblResponse = httpClient.send(xblRequest, HttpResponse.BodyHandlers.ofString());
         Map<String, Object> xblMap = gson.fromJson(xblResponse.body(), new TypeToken<Map<String, Object>>(){}.getType());
         String xblToken = (String) xblMap.get("Token");
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> xui = (List<Map<String, Object>>) ((Map<String, Object>) xblMap.get("DisplayClaims")).get("xui");
+        
+        Map<String, Object> DisplayClaims = (Map<String, Object>) xblMap.get("DisplayClaims");
+        List<Map<String, Object>> xui = (List<Map<String, Object>>) DisplayClaims.get("xui");
         String uhs = (String) xui.get(0).get("uhs");
 
         Map<String, Object> xstsProps = new HashMap<>();
@@ -185,7 +193,10 @@ public class ProfileManager {
         HttpResponse<String> mcResponse = httpClient.send(mcRequest, HttpResponse.BodyHandlers.ofString());
         Map<String, Object> mcMap = gson.fromJson(mcResponse.body(), new TypeToken<Map<String, Object>>(){}.getType());
         String mcToken = (String) mcMap.get("access_token");
-        if (mcToken == null) throw new RuntimeException("Mojang Xbox Auth Failed: No access token returned.");
+
+        if (mcToken == null) {
+            throw new RuntimeException("Mojang Xbox Auth Failed: No access token returned.");
+        }
 
         HttpRequest profileRequest = HttpRequest.newBuilder()
             .uri(URI.create("https://api.minecraftservices.com/minecraft/profile"))
@@ -195,10 +206,10 @@ public class ProfileManager {
 
         HttpResponse<String> profileResponse = httpClient.send(profileRequest, HttpResponse.BodyHandlers.ofString());
         Map<String, Object> profileMap = gson.fromJson(profileResponse.body(), new TypeToken<Map<String, Object>>(){}.getType());
-
+        
         String username = (String) profileMap.get("name");
         String uuidStr = (String) profileMap.get("id");
-
+        
         if (uuidStr != null && uuidStr.length() == 32) {
             uuidStr = uuidStr.replaceFirst(
                 "(\\p{XDigit}{8})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{12})",

@@ -1,0 +1,83 @@
+plugins {
+    id 'fabric-loom' version '1.15.5'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name + "-fabric-1.21.11"
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['../src/main/java']
+        }
+        resources {
+            srcDirs = ['../src/main/resources']
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = "Fabric"
+        url = "https://maven.fabricmc.net/"
+    }
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+    }
+    maven {
+        url = "https://maven.dimaskama.net/releases"
+    }
+    maven {
+        name = "Xaero"
+        url = "https://chocolateminecraft.com/maven"
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:1.21.11"
+    mappings "net.fabricmc:yarn:1.21.11+build.1:v2"
+    modImplementation "net.fabricmc:fabric-loader:0.17.3"
+
+    // Fabric API
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.141.3+1.21.11"
+
+    // MCEF Dependency
+    modImplementation "maven.modrinth:mcef-modern:0.3.3+mc1.21.11.jcef146.0.10"
+    include "maven.modrinth:mcef-modern:0.3.3+mc1.21.11.jcef146.0.10"
+
+    // JCEF compile classpath dependencies
+    implementation "me.friwi:jcef-api:jcef-d3de827+cef-146.0.10+g8219561+chromium-146.0.7680.179"
+    implementation "me.friwi:jcefmaven:146.0.10"
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+java {
+    withSourcesJar()
+
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.base.archivesName.get()}"}
+    }
+}

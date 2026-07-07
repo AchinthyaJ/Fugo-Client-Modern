@@ -3,32 +3,32 @@ package io.github.fugoclient.mcefmod;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import com.mojang.blaze3d.platform.NativeImage;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.ResourceLocation;
 
 public class CustomTextureManager {
-    private static Identifier customCape = null;
+    private static ResourceLocation customCape = null;
     
     private static NativeImage fullCapeImage = null;
     private static NativeImage frameImage = null;
-    private static NativeImageBackedTexture capeTexture = null;
+    private static DynamicTexture capeTexture = null;
     private static int capeFrameHeight = 32;
     private static int capeFramesCount = 1;
     private static int currentCapeFrame = 0;
     private static int tickDivider = 0;
     
     private static boolean loaded = false;
-    private static boolean loadAttempted = false;
 
     public static void loadCustomTextures() {
-        if (loaded || loadAttempted) return;
-        loadAttempted = true;
+        if (loaded) return;
+        loaded = true;
         
         try {
             File deathClientDir = new File(System.getProperty("user.home"), ".death-client");
             if (!deathClientDir.exists()) {
+                System.out.println("[CustomTextureManager] .death-client folder not found at " + deathClientDir.getAbsolutePath());
                 return;
             }
 
@@ -50,6 +50,7 @@ public class CustomTextureManager {
                     int height = fullCapeImage.getHeight();
 
                     if (width <= 0 || height <= 0) {
+                        System.err.println("[CustomTextureManager] Invalid cape dimensions: " + width + "x" + height);
                         return;
                     }
 
@@ -66,33 +67,46 @@ public class CustomTextureManager {
                     capeFrameHeight = Math.min(capeFrameHeight, height);
                     capeFramesCount = Math.max(1, height / capeFrameHeight);
 
+                    System.out.println("[CustomTextureManager] Cape dimensions: " + width + "x" + height +
+                        ", frame height: " + capeFrameHeight + ", frames: " + capeFramesCount);
+
                     try {
                         frameImage = new NativeImage(width, capeFrameHeight, false);
                         fullCapeImage.copyRect(frameImage, 0, 0, 0, 0, width, capeFrameHeight, false, false);
 
-                        capeTexture = new NativeImageBackedTexture(() -> "custom_cape", frameImage);
-                        customCape = Identifier.of("fugoclient", "custom_cape");
-                        MinecraftClient.getInstance().getTextureManager().registerTexture(
-                            Identifier.of("fugoclient", "textures/custom_cape.png"),
+                        capeTexture = new DynamicTexture(frameImage);
+                        customCape = new ResourceLocation("fugoclient", "textures/custom_cape.png");
+                        Minecraft.getInstance().getTextureManager().register(
+                            customCape,
                             capeTexture
                         );
-                        loaded = true;
+                        System.out.println("[CustomTextureManager] ✓ Loaded cape: " + capeFile.getName() +
+                            " (" + capeFramesCount + " frames)");
                     } catch (Exception e) {
-                        if (frameImage != null) frameImage.close();
+                        System.err.println("[CustomTextureManager] Failed to create cape texture:");
+                        e.printStackTrace();
+                        if (frameImage != null) {
+                            frameImage.close();
+                        }
                         if (fullCapeImage != null) {
                             fullCapeImage.close();
                             fullCapeImage = null;
                         }
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    System.err.println("[CustomTextureManager] Failed to read cape file: " + capeFile.getAbsolutePath());
+                    e.printStackTrace();
+                }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("[CustomTextureManager] Error loading custom textures:");
+            e.printStackTrace();
+        }
     }
 
     public static void tick() {
         if (!loaded) {
             loadCustomTextures();
-            return;
         }
 
         if (capeFramesCount > 1 && fullCapeImage != null && frameImage != null && capeTexture != null) {
@@ -107,6 +121,8 @@ public class CustomTextureManager {
                     int srcY = currentCapeFrame * capeFrameHeight;
 
                     if (srcY + capeFrameHeight > height) {
+                        System.err.println("[CustomTextureManager] Frame out of bounds: srcY=" + srcY +
+                            ", frameHeight=" + capeFrameHeight + ", totalHeight=" + height);
                         currentCapeFrame = 0;
                         srcY = 0;
                     }
@@ -114,13 +130,15 @@ public class CustomTextureManager {
                     fullCapeImage.copyRect(frameImage, 0, srcY, 0, 0, width, capeFrameHeight, false, false);
                     capeTexture.upload();
                 } catch (Exception e) {
+                    System.err.println("[CustomTextureManager] Error updating cape animation:");
+                    e.printStackTrace();
                     capeFramesCount = 1;
                 }
             }
         }
     }
 
-    public static Identifier getCustomCape() {
+    public static ResourceLocation getCustomCape() {
         return customCape;
     }
 

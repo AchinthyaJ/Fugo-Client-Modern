@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Puter Claude Coder</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="https://js.puter.com/v2/"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <p class="eyebrow">Puter.js + Claude</p>
+        <h1>Folder Coder</h1>
+        <p class="subtle">Pick this repo in your browser, ask for a change, then apply the generated file updates.</p>
+      </div>
+
+      <div class="panel">
+        <button id="connect-folder" class="primary">Choose Folder</button>
+        <button id="refresh-files" class="ghost" disabled>Refresh Files</button>
+        <button id="sign-in" class="ghost">Sign In to Puter</button>
+      </div>
+
+      <div class="panel">
+        <label for="model-select">Claude model</label>
+        <select id="model-select"></select>
+      </div>
+
+      <div class="panel status-panel">
+        <div><span class="label">Folder</span><span id="folder-name">Not connected</span></div>
+        <div><span class="label">Files</span><span id="file-count">0</span></div>
+        <div><span class="label">Puter</span><span id="auth-state">Checking...</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="section-head">
+          <h2>Context Files</h2>
+          <button id="select-recommended" class="ghost" disabled>Pick Recommended</button>
+        </div>
+        <p class="subtle compact">Selected files are sent to Claude as context. Applied edits can still touch any file inside the chosen folder.</p>
+        <div id="file-list" class="file-list empty">Choose a folder to load files.</div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="panel composer">
+        <div class="section-head">
+          <h2>Task</h2>
+          <button id="run-task" class="primary" disabled>Generate Changes</button>
+        </div>
+        <textarea id="task-input" placeholder="Example: Add a standalone web dashboard that lists all mods and lets me filter by loader."></textarea>
+        <div class="helper-row">
+          <label class="checkbox">
+            <input id="include-tree" type="checkbox" checked>
+            <span>Include file tree</span>
+          </label>
+          <label class="checkbox">
+            <input id="stream-output" type="checkbox" checked>
+            <span>Stream response</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel output">
+        <div class="section-head">
+          <h2>Model Output</h2>
+          <span id="run-state" class="pill idle">Idle</span>
+        </div>
+        <pre id="raw-output" class="raw-output">No request yet.</pre>
+      </section>
+
+      <section class="panel changes">
+        <div class="section-head">
+          <h2>Proposed Changes</h2>
+          <button id="apply-changes" class="primary" disabled>Apply Checked Changes</button>
+        </div>
+        <div id="change-summary" class="subtle">No generated changes yet.</div>
+        <div id="change-list" class="change-list empty">Claude should return JSON file edits here.</div>
+      </section>
+    </main>
+  </div>
+
+  <template id="file-item-template">
+    <label class="file-item">
+      <input type="checkbox" class="file-checkbox">
+      <span class="file-path"></span>
+    </label>
+  </template>
+
+  <template id="change-item-template">
+    <article class="change-item">
+      <label class="change-head">
+        <span class="change-main">
+          <input type="checkbox" class="change-checkbox" checked>
+          <span class="change-path"></span>
+        </span>
+        <span class="change-action"></span>
+      </label>
+      <p class="change-explanation"></p>
+      <details>
+        <summary>Preview content</summary>
+        <pre class="change-content"></pre>
+      </details>
+    </article>
+  </template>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
