@@ -15,7 +15,7 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import org.lwjgl.glfw.GLFW;
 
-import net.montoyo.mcef.api.IBrowser;
+import com.cinemamod.mcef.MCEFBrowser;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.*;
 import net.minecraft.client.renderer.GameRenderer;
@@ -27,10 +27,15 @@ public class FugoClientForge {
     private static KeyMapping editKeybind;
     private static KeyMapping zoomKeybind;
 
+    // Throttle counters
+    private int tickCounter = 0;
+    private int pvpTickCounter = 0;
+    private static final int PVP_TICK_INTERVAL = 5;
+
     public FugoClientForge() {
         WebUIManager.getInstance().init();
 
-        FMLJavaModLoadingContext.get().getModEventBus().register(this);
+        FMLJavaModLoadingContext.get().getModEventBus().addListener(this::registerKeyMappings);
         MinecraftForge.EVENT_BUS.register(this);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -70,7 +75,14 @@ public class FugoClientForge {
         if (event.phase != TickEvent.Phase.END) return;
 
         Minecraft client = Minecraft.getInstance();
-        CustomTextureManager.tick();
+        tickCounter++;
+
+        WebUIManager.getInstance().ensureBrowser();
+
+        // CustomTextureManager - throttle to every 2 ticks
+        if ((tickCounter & 1) == 0) {
+            CustomTextureManager.tick();
+        }
 
         if (modsKeybind != null && editKeybind != null) {
             while (modsKeybind.consumeClick()) {
@@ -87,8 +99,15 @@ public class FugoClientForge {
         }
 
         if (client.level != null) {
-            PvPTracker.tick(client.player);
+            // PvPTracker - throttle to every 5 ticks
+            pvpTickCounter++;
+            if (pvpTickCounter >= PVP_TICK_INTERVAL) {
+                pvpTickCounter = 0;
+                PvPTracker.tick(client.player);
+            }
             Autoclicker.tick(client);
+            
+            // WebUI updates - every tick for zero delay
             if (client.getWindow() != null) {
                 double scale = client.getWindow().getGuiScale();
                 int width = client.getWindow().getGuiScaledWidth();
@@ -98,6 +117,7 @@ public class FugoClientForge {
             }
         }
 
+        // State changes - every tick
         WebUIManager.getInstance().onStateChanged();
     }
 
@@ -132,19 +152,21 @@ public class FugoClientForge {
         Minecraft client = Minecraft.getInstance();
         if (client.level == null || client.screen instanceof WebTitleScreen) return;
 
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser == null) return;
 
-        int textureId = browser.getTextureID();
+        int textureId = browser.getRenderer().getTextureID();
         if (textureId <= 0) return;
 
         int width = event.getWindow().getGuiScaledWidth();
         int height = event.getWindow().getGuiScaledHeight();
 
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
         RenderSystem.setShaderTexture(0, textureId);
         RenderSystem.setShader(GameRenderer::getPositionTexShader);
 
-        Tessellator tessellator = Tessellator.getInstance();
+        Tesselator tessellator = Tesselator.getInstance();
         BufferBuilder bufferBuilder = tessellator.getBuilder();
         Matrix4f matrix = event.getGuiGraphics().pose().last().pose();
 
@@ -154,6 +176,7 @@ public class FugoClientForge {
         bufferBuilder.vertex(matrix, (float) width, 0.0f, 0.0f).uv(1.0f, 0.0f).endVertex();
         bufferBuilder.vertex(matrix, 0.0f, 0.0f, 0.0f).uv(0.0f, 0.0f).endVertex();
         tessellator.end();
+        RenderSystem.disableBlend();
     }
 
     public static boolean isZooming() {

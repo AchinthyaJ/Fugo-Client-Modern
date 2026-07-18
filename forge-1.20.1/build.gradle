@@ -32,16 +32,28 @@ minecraft {
 repositories {
     mavenCentral()
     maven {
-        name = "CurseMaven"
-        url = "https://cursemaven.com"
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
     }
 }
 
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.20.1-47.3.0'
+    minecraft 'net.minecraftforge:forge:1.20.1-47.2.0'
 
-    // MCEF Forge jar from CurseMaven (project 636236, file 5828187 = mcef-forge-2.1.6-1.20.1)
-    implementation fg.deobf("curse.maven:mcef-636236:5828187")
+    // MCEF Forge jar from Modrinth Maven (version 2.1.6-1.20.1, Forge release ID: x91l6OKB)
+    implementation fg.deobf("maven.modrinth:mcef:x91l6OKB")
+
+    // MCEF API stub jar — compileOnly for compilation.
+    // The modern MCEF 2.1.6 jar does not expose net.montoyo.mcef.api.* packages,
+    // so we bundle the legacy interface classes directly in our output.
+    compileOnly files('libs/mcef-1.12.2-1.11-api.jar')
+
+    // Explicit compileOnly for the deobfuscated Forge+Minecraft jar so that transitive
+    // Minecraft classes (ItemCooldowns, FoodData, etc.) are visible during javac.
+    // ForgeGradle adds these to runtime but not to the standard compileClasspath when
+    // fg.deobf() deps are in play.
+    def forgeUserRepo = "${System.getProperty('user.home')}/.gradle/caches/forge_gradle/minecraft_user_repo"
+    compileOnly files("${forgeUserRepo}/net/minecraftforge/forge/1.20.1-47.2.0_mapped_official_1.20.1/forge-1.20.1-47.2.0_mapped_official_1.20.1.jar")
 
     // MixinExtras
     compileOnly "io.github.llamalad7:mixinextras-common:0.4.1"
@@ -66,8 +78,30 @@ tasks.named('processResources', ProcessResources).configure {
     filesMatching(['META-INF/mods.toml']) {
         expand replaceProperties
     }
+
+    // Copy shared web assets from root project into the classpath
+    from("${rootProject.projectDir}/src/main/resources") {
+        include "assets/fugoclient/web/**"
+    }
+}
+
+tasks.register('extractApi', Copy) {
+    from zipTree(file('libs/mcef-1.12.2-1.11-api.jar'))
+    into "${project.buildDir}/extracted-api"
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+}
+
+sourceSets {
+    main {
+        output.dir("${project.buildDir}/extracted-api", builtBy: 'extractApi')
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
+
+

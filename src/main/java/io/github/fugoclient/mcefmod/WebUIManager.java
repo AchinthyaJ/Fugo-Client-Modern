@@ -14,6 +14,10 @@ public class WebUIManager {
     public static boolean vanillaCrosshairDisabled = false;
     public static boolean fullbrightEnabled = false;
     public static boolean isDisconnecting = false;
+    
+    // Browser frame rate constants - REDUCED to absolute minimum
+    public static final int BROWSER_FPS_ACTIVE = 10;   // 10 FPS when visible - still enough for HUD text
+    public static final int BROWSER_FPS_IDLE = 1;      // 1 FPS when minimized/hidden
 
     private static final com.google.gson.Gson GSON = new com.google.gson.Gson();
     private static final String WEB_UI_PATH;
@@ -66,7 +70,12 @@ public class WebUIManager {
     private final StringBuilder reusableSb = new StringBuilder(320);
     private final StringBuilder statsSb = new StringBuilder(1024);
     private final StringBuilder stateSb = new StringBuilder(160);
-    private int lastStatsHash = 0;
+    private long lastStatsHash = 0;
+    private long lastHudKeysOnlyTime = 0;
+
+    // Throttle: only send stats every 500ms minimum
+    private static final long STATS_MIN_INTERVAL_MS = 500;
+    private long lastStatsSentTime = 0;
 
     private WebUIManager() {}
 
@@ -160,10 +169,28 @@ public class WebUIManager {
             var client = MinecraftClient.getInstance();
             double scale = client.getWindow().getScaleFactor();
             browser.resize((int)(client.getWindow().getScaledWidth() * scale), (int)(client.getWindow().getScaledHeight() * scale));
+
+            // Cap CEF rendering to 10 FPS — HUD text doesn't need more, saves massive CPU/GPU
+            try {
+                browser.getCefBrowser().setWindowlessFrameRate(BROWSER_FPS_ACTIVE);
+            } catch (Throwable ignored) {}
         });
     }
 
     public MCEFBrowser getBrowser() { return browser; }
+
+    /**
+     * Dynamically adjust CEF's internal rendering frame rate.
+     * Call with BROWSER_FPS_IDLE (1) when overlay is hidden to save CPU.
+     * Call with BROWSER_FPS_ACTIVE (10) when overlay becomes visible.
+     */
+    public void setBrowserFrameRate(int fps) {
+        if (browser != null && browser.getCefBrowser() != null) {
+            try {
+                browser.getCefBrowser().setWindowlessFrameRate(fps);
+            } catch (Throwable ignored) {}
+        }
+    }
 
     public WebTitleScreen getOrCreateTitleScreen() {
         if (titleScreen == null) titleScreen = new WebTitleScreen(false);
@@ -230,7 +257,8 @@ public class WebUIManager {
         lastW = w; lastA = a; lastS = s; lastD = d; lastSpace = space;
         lastLmb = lmb; lastRmb = rmb; lastShift = shift; lastSprint = sprint;
 
-        if (isOverlayVisible && keysChanged && (now - lastKeystrokeTime >= 50)) {
+        // Throttle key updates to 100ms (10Hz) instead of 50ms (20Hz)
+        if (isOverlayVisible && keysChanged && (now - lastKeystrokeTime >= 100)) {
             lastKeystrokeTime = now;
             lastSentLmbCps = lmbCps; lastSentRmbCps = rmbCps;
             StringBuilder sb = reusableSb;
@@ -243,8 +271,8 @@ public class WebUIManager {
             browser.getCefBrowser().executeJavaScript(sb.toString(), "", 0);
         }
 
-        // Check interactive state (every 500ms)
-        if (now - lastCoordsTime < 500) {
+        // Check interactive state (every 1000ms - was 500ms)
+        if (now - lastCoordsTime < 1000) {
             boolean interactive = client.currentScreen instanceof WebTitleScreen && ((WebTitleScreen) client.currentScreen).isOverlay();
             boolean editMode = interactive && ((WebTitleScreen) client.currentScreen).isEditMode();
             if (!lastInteractive_set || !lastEditMode_set || interactive != lastInteractive || editMode != lastEditMode) {
@@ -267,68 +295,123 @@ public class WebUIManager {
 
         if (!isOverlayVisible) return;
 
-        // Build stats JSON using pre-allocated StringBuilder - ZERO ALLOCATIONS
-        StringBuilder json = statsSb;
-        json.setLength(0);
-        json.append("window.MinecraftBridge.trigger('hud:update_stats',{")
-            .append("\"fps\":").append(client.getCurrentFps())
-            .append(",\"ping\":");
+        // Throttle stats updates to minimum 500ms interval
+        if (now - lastStatsSentTime < STATS_MIN_INTERVAL_MS) return;
+        lastStatsSentTime = now;
+
+        // Compute cheap numeric hash BEFORE building the JSON string to skip unchanged frames
+        int fps = client.getCurrentFps();
         var entry = client.getNetworkHandler().getPlayerListEntry(player.getUuid());
-        json.append(entry != null ? entry.getLatency() : 0);
-        json.append(",\"sessionTime\":").append(secondsElapsed)
-            .append(",\"kills\":").append(PvPTracker.getKills())
-            .append(",\"deaths\":").append(PvPTracker.getDeaths())
-            .append(",\"combo\":").append(PvPTracker.getCombo())
-            .append(",\"health\":").append(Math.round(player.getHealth()))
-            .append(",\"maxHealth\":").append(Math.round(player.getMaxHealth()))
-            .append(",\"hunger\":").append(player.getHungerManager().getFoodLevel())
-            .append(",\"xpLevel\":").append(player.experienceLevel)
-            .append(",\"x\":").append((int)player.getX())
-            .append(",\"y\":").append((int)player.getY())
-            .append(",\"z\":").append((int)player.getZ())
-            .append(",\"facing\":\"").append(player.getHorizontalFacing().asString().toUpperCase()).append('"');
+        int ping = entry != null ? entry.getLatency() : 0;
+        int kills = PvPTracker.getKills();
+        int deaths = PvPTracker.getDeaths();
+        int combo = PvPTracker.getCombo();
+        int health = Math.round(player.getHealth());
+        int maxHealth = Math.round(player.getMaxHealth());
+        int hunger = player.getHungerManager().getFoodLevel();
+        int xpLevel = player.experienceLevel;
+        int px = (int) player.getX();
+        int py = (int) player.getY();
+        int pz = (int) player.getZ();
+        int facingOrdinal = player.getHorizontalFacing().ordinal();
 
         double xSpeed = player.getX() - player.lastX;
         double zSpeed = player.getZ() - player.lastZ;
         double bps = Math.sqrt(xSpeed * xSpeed + zSpeed * zSpeed) * 20.0;
-        json.append(",\"bps\":").append((int)(bps * 100 + 0.5) / 100.0);
+        int bpsInt = (int)(bps * 100 + 0.5);
 
+        int targetHealthVal = Math.round(PvPTracker.getTargetHealth());
+        int targetDistInt = (int)(PvPTracker.getTargetDistance() * 100 + 0.5);
+
+        long worldTime = client.world.getTimeOfDay();
+        int day = (int)(worldTime / 24000);
+        int weatherCode = client.world.isThundering() ? 2 : (client.world.isRaining() ? 1 : 0);
+        int hour24 = (int)((worldTime / 1000 + 6) % 24);
+        int minute = (int)((worldTime % 1000) * 60 / 1000);
+
+        // Compute fast hash from primitives - ZERO string allocations
+        long hash = fps;
+        hash = hash * 31 + ping;
+        hash = hash * 31 + secondsElapsed;
+        hash = hash * 31 + kills;
+        hash = hash * 31 + deaths;
+        hash = hash * 31 + combo;
+        hash = hash * 31 + health;
+        hash = hash * 31 + maxHealth;
+        hash = hash * 31 + hunger;
+        hash = hash * 31 + xpLevel;
+        hash = hash * 31 + px;
+        hash = hash * 31 + py;
+        hash = hash * 31 + pz;
+        hash = hash * 31 + facingOrdinal;
+        hash = hash * 31 + bpsInt;
+        hash = hash * 31 + targetHealthVal;
+        hash = hash * 31 + targetDistInt;
+        hash = hash * 31 + day;
+        hash = hash * 31 + weatherCode;
+        hash = hash * 31 + hour24;
+        hash = hash * 31 + minute;
+
+        if (hash == lastStatsHash) return;
+        lastStatsHash = hash;
+
+        // Build stats JSON using pre-allocated StringBuilder - only when data changed
+        String facingStr = player.getHorizontalFacing().asString().toUpperCase();
         String targetName = PvPTracker.getTargetName();
-        json.append(",\"targetName\":\"").append(targetName.replace("\"", "\\\"")).append('"');
-        json.append(",\"targetHealth\":").append(Math.round(PvPTracker.getTargetHealth()))
-            .append(",\"targetDistance\":").append((int)(PvPTracker.getTargetDistance() * 100 + 0.5) / 100.0);
-
         String[] targetArmor = PvPTracker.getTargetArmor();
+
+        StringBuilder json = statsSb;
+        json.setLength(0);
+        json.append("window.MinecraftBridge.trigger('hud:update_stats',{")
+            .append("\"fps\":").append(fps)
+            .append(",\"ping\":").append(ping)
+            .append(",\"sessionTime\":").append(secondsElapsed)
+            .append(",\"kills\":").append(kills)
+            .append(",\"deaths\":").append(deaths)
+            .append(",\"combo\":").append(combo)
+            .append(",\"health\":").append(health)
+            .append(",\"maxHealth\":").append(maxHealth)
+            .append(",\"hunger\":").append(hunger)
+            .append(",\"xpLevel\":").append(xpLevel)
+            .append(",\"x\":").append(px)
+            .append(",\"y\":").append(py)
+            .append(",\"z\":").append(pz)
+            .append(",\"facing\":\"").append(facingStr).append('"')
+            .append(",\"bps\":").append(bpsInt / 100.0);
+
+        json.append(",\"targetName\":\"").append(targetName.replace("\"", "\\\"")).append('"');
+        json.append(",\"targetHealth\":").append(targetHealthVal)
+            .append(",\"targetDistance\":").append(targetDistInt / 100.0);
+
         json.append(",\"targetArmor\":[\"")
             .append(nullToEmpty(targetArmor[0])).append("\",\"")
             .append(nullToEmpty(targetArmor[1])).append("\",\"")
             .append(nullToEmpty(targetArmor[2])).append("\",\"")
             .append(nullToEmpty(targetArmor[3])).append("\"]");
 
-        long worldTime = client.world.getTimeOfDay();
-        json.append(",\"utility\":{\"day\":").append((int)(worldTime / 24000))
-            .append(",\"weather\":\"").append(client.world.isThundering() ? "Thunder" : (client.world.isRaining() ? "Rain" : "Clear"))
+        json.append(",\"utility\":{\"day\":").append(day)
+            .append(",\"weather\":\"").append(weatherCode == 2 ? "Thunder" : (weatherCode == 1 ? "Rain" : "Clear"))
             .append("\",\"time\":\"");
-        int hour24 = (int)((worldTime / 1000 + 6) % 24);
-        int minute = (int)((worldTime % 1000) * 60 / 1000);
         if (hour24 < 10) json.append('0');
         json.append(hour24).append(':');
         if (minute < 10) json.append('0');
         json.append(minute).append("\"}});");
 
-        int hash = json.toString().hashCode();
-        if (hash != lastStatsHash) {
-            lastStatsHash = hash;
-            browser.getCefBrowser().executeJavaScript(json.toString(), "", 0);
-        }
+        browser.getCefBrowser().executeJavaScript(json.toString(), "", 0);
     }
 
     public void updateHudKeysOnly() {
+        // Throttle to max ~20Hz (was 60Hz) to avoid JS flooding from rapid input events
+        long now = System.currentTimeMillis();
+        if (now - lastHudKeysOnlyTime < 50) return;
+        lastHudKeysOnlyTime = now;
+
         MCEFBrowser browser = getBrowser();
         if (browser == null || browser.getCefBrowser() == null) return;
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.world == null) return;
+        if (!isOverlayVisible) return;
 
         boolean w = client.options.forwardKey.isPressed();
         boolean a = client.options.leftKey.isPressed();
@@ -344,10 +427,16 @@ public class WebUIManager {
         if (rmb && !lastRmbState) registerClick(true);
         lastLmbState = lmb; lastRmbState = rmb;
 
+        // Skip JS call if no keys actually changed
         int lmbCps = getCps(false);
         int rmbCps = getCps(true);
+        if (w == lastW && a == lastA && s == lastS && d == lastD && space == lastSpace &&
+            lmb == lastLmb && rmb == lastRmb && shift == lastShift && sprint == lastSprint &&
+            lmbCps == lastSentLmbCps && rmbCps == lastSentRmbCps) return;
+
         lastW = w; lastA = a; lastS = s; lastD = d; lastSpace = space;
         lastLmb = lmb; lastRmb = rmb; lastShift = shift; lastSprint = sprint;
+        lastSentLmbCps = lmbCps; lastSentRmbCps = rmbCps;
 
         StringBuilder sb = reusableSb;
         sb.setLength(0);
@@ -429,6 +518,9 @@ public class WebUIManager {
         extractFile("/assets/fugoclient/web/script.js", new File(webDir, "script.js"));
         extractFile("/assets/fugoclient/web/minecraft.ico", new File(webDir, "minecraft.ico"));
         extractFile("/assets/fugoclient/web/launcherbackground.png", new File(webDir, "launcherbackground.png"));
+        extractFile("/assets/fugoclient/web/editor.html", new File(webDir, "editor.html"));
+        extractFile("/assets/fugoclient/web/editor.css", new File(webDir, "editor.css"));
+        extractFile("/assets/fugoclient/web/editor.js", new File(webDir, "editor.js"));
     }
 
     private void extractFile(String resourcePath, File destFile) {

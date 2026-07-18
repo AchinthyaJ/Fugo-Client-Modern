@@ -21,13 +21,21 @@ import net.minecraft.client.gui.screen.recipebook.RecipeResultCollection;
 import java.util.List;
 import java.util.UUID;
 import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.file.Files;
 import com.google.gson.JsonArray;
 import com.google.gson.Gson;
 import io.github.fugoclient.mcefmod.mixin.LightmapTextureManagerAccessor;
 
+import com.sun.net.httpserver.HttpServer;
+
 public class MinecraftJSBridge extends CefMessageRouterHandlerAdapter {
     private static final Gson GSON = new Gson();
     private static Double originalGamma = null;
+    private static HttpServer editorServer = null;
+    private static final int EDITOR_PORT = 8642;
 
     @Override
     public boolean onQuery(CefBrowser b, CefFrame frame, long queryId, String query, boolean persistent, CefQueryCallback cb) {
@@ -207,11 +215,37 @@ public class MinecraftJSBridge extends CefMessageRouterHandlerAdapter {
                 case "gallery:delete_file":
                     handleGalleryAction(action, json, client, cb);
                     return true;
+                case "theme:get": {
+                    File themeFile = new File(client.runDirectory, "fugo-theme.json");
+                    String content = "{}";
+                    if (themeFile.exists()) {
+                        try {
+                            content = new String(Files.readAllBytes(themeFile.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                        } catch (Exception ignored) {}
+                    }
+                    cb.success(content);
+                    return true;
+                }
                 case "recipes:get": {
                     JsonObject resp = new JsonObject();
                     resp.addProperty("status", "success");
                     resp.add("recipes", getRecipesJson(client));
                     cb.success(resp.toString());
+                    return true;
+                }
+                case "launch_editor": {
+                    new Thread(() -> {
+                        try {
+                            startEditorServer();
+                            String url = "http://localhost:" + EDITOR_PORT + "/editor.html";
+                            net.minecraft.util.Util.getOperatingSystem().open(java.net.URI.create(url));
+                            System.out.println("[Fugo Bridge] Editor launched at: " + url);
+                        } catch (Exception ex) {
+                            System.out.println("[Fugo Bridge] Failed to launch editor: " + ex.getMessage());
+                            ex.printStackTrace();
+                        }
+                    }, "Fugo-Editor-Launcher").start();
+                    cb.success("{\"status\":\"success\",\"port\":" + EDITOR_PORT + "}");
                     return true;
                 }
                 default:
@@ -222,6 +256,130 @@ public class MinecraftJSBridge extends CefMessageRouterHandlerAdapter {
             cb.failure(500, e.getMessage());
             return false;
         }
+    }
+
+    private static synchronized void startEditorServer() throws Exception {
+        if (editorServer != null) return;
+        File webDir = findWebAssetsDir();
+        if (webDir == null) throw new RuntimeException("Could not find web assets directory");
+        final File serveDir = webDir;
+        editorServer = HttpServer.create(new InetSocketAddress("127.0.0.1", EDITOR_PORT), 0);
+        editorServer.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+
+            // Allow CORS preflight OPTIONS requests
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                exchange.sendResponseHeaders(204, -1);
+                exchange.getResponseBody().close();
+                return;
+            }
+
+            // API: get current theme
+            if (exchange.getRequestMethod().equalsIgnoreCase("GET") && path.equals("/api/get-theme")) {
+                File themeFile = new File(MinecraftClient.getInstance().runDirectory, "fugo-theme.json");
+                String content = "{}";
+                if (themeFile.exists()) {
+                    try {
+                        content = new String(Files.readAllBytes(themeFile.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                    } catch (Exception ignored) {}
+                }
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                byte[] data = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, data.length);
+                exchange.getResponseBody().write(data);
+                exchange.getResponseBody().close();
+                return;
+            }
+
+            // API: apply and save theme
+            if (exchange.getRequestMethod().equalsIgnoreCase("POST") && path.equals("/api/apply-theme")) {
+                try {
+                    InputStream is = exchange.getRequestBody();
+                    byte[] bodyBytes = is.readAllBytes();
+                    String body = new String(bodyBytes, java.nio.charset.StandardCharsets.UTF_8);
+                    
+                    // Save to config directory
+                    File themeFile = new File(MinecraftClient.getInstance().runDirectory, "fugo-theme.json");
+                    Files.write(themeFile.toPath(), bodyBytes);
+                    
+                    // Apply to in-game CEF browser
+                    MinecraftClient.getInstance().execute(() -> {
+                        try {
+                            if (WebUIManager.getInstance().getBrowser() != null && WebUIManager.getInstance().getBrowser().getCefBrowser() != null) {
+                                WebUIManager.getInstance().getBrowser().getCefBrowser().executeJavaScript(
+                                    "if (window.applyThemeData) window.applyThemeData(" + body + ");", "", 0
+                                );
+                            }
+                        } catch (Exception ignored) {}
+                    });
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    String resp = "{\"status\":\"success\"}";
+                    exchange.sendResponseHeaders(200, resp.length());
+                    exchange.getResponseBody().write(resp.getBytes());
+                    exchange.getResponseBody().close();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                    String err = "{\"status\":\"error\",\"message\":\"" + ex.getMessage().replace("\"", "\\\"") + "\"}";
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(500, err.length());
+                    exchange.getResponseBody().write(err.getBytes());
+                    exchange.getResponseBody().close();
+                }
+                return;
+            }
+
+            if (path.equals("/")) path = "/editor.html";
+            File file = new File(serveDir, path);
+            try {
+                File canonicalFile = file.getCanonicalFile();
+                File canonicalServeDir = serveDir.getCanonicalFile();
+                if (!canonicalFile.exists() || !canonicalFile.isFile() || !canonicalFile.getPath().startsWith(canonicalServeDir.getPath())) {
+                    exchange.sendResponseHeaders(404, 0); exchange.getResponseBody().close(); return;
+                }
+            } catch (Exception ex) {
+                exchange.sendResponseHeaders(500, 0); exchange.getResponseBody().close(); return;
+            }
+            String ct = "application/octet-stream";
+            String n = file.getName().toLowerCase();
+            if (n.endsWith(".html")) ct = "text/html; charset=utf-8";
+            else if (n.endsWith(".css")) ct = "text/css; charset=utf-8";
+            else if (n.endsWith(".js")) ct = "application/javascript; charset=utf-8";
+            else if (n.endsWith(".png")) ct = "image/png";
+            else if (n.endsWith(".ico")) ct = "image/x-icon";
+            byte[] data = Files.readAllBytes(file.toPath());
+            exchange.getResponseHeaders().set("Content-Type", ct);
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.sendResponseHeaders(200, data.length);
+            OutputStream os = exchange.getResponseBody(); os.write(data); os.close();
+        });
+        editorServer.setExecutor(null);
+        editorServer.start();
+    }
+
+    private static File findWebAssetsDir() {
+        for (String p : new String[]{"src/main/resources/assets/fugoclient/web", "../src/main/resources/assets/fugoclient/web"}) {
+            File f = new File(p);
+            if (f.exists() && new File(f, "editor.html").exists()) return f;
+        }
+        MinecraftClient mc = MinecraftClient.getInstance();
+        File extracted = new File(mc.runDirectory, "web-ui");
+        if (extracted.exists() && new File(extracted, "editor.html").exists()) return extracted;
+        try {
+            extracted.mkdirs();
+            for (String fn : new String[]{"editor.html","editor.css","editor.js","hud.html","titlescreen.html","style.css","script.js","launcherbackground.png","minecraft.ico"}) {
+                InputStream is = MinecraftJSBridge.class.getClassLoader().getResourceAsStream("assets/fugoclient/web/" + fn);
+                if (is != null) { Files.copy(is, new File(extracted, fn).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING); is.close(); }
+            }
+            if (new File(extracted, "editor.html").exists()) return extracted;
+        } catch (Exception ex) { ex.printStackTrace(); }
+        return null;
     }
 
     private void openModConfig(MinecraftClient client, String modId) {

@@ -42,6 +42,14 @@ public class MCEFMod implements ClientModInitializer {
     private static int fullWidth = 0;
     private static int fullHeight = 0;
 
+    // HUD render throttle - only render browser texture every N frames
+    private static int hudRenderSkipCounter = 0;
+    private static final int HUD_RENDER_INTERVAL = 3; // Render browser texture every 3rd frame (~33 FPS at 100 FPS game)
+
+    // PvPTracker tick throttle
+    private static int pvpTickCounter = 0;
+    private static final int PVP_TICK_INTERVAL = 5; // Every 5 ticks (4Hz)
+
     @Override
     public void onInitializeClient() {
         WebUIManager.getInstance().init();
@@ -93,7 +101,15 @@ public class MCEFMod implements ClientModInitializer {
             tickCounter++;
             boolean inWorld = client.world != null;
             
-            CustomTextureManager.tick();
+            // CustomTextureManager.tick() - throttle to every 2 ticks (10Hz)
+            if ((tickCounter & 1) == 0) {
+                CustomTextureManager.tick();
+            }
+            
+            // FreeLookHandler - throttle to every 2 ticks (10Hz)
+            if ((tickCounter & 1) == 0) {
+                FreeLookHandler.update(client);
+            }
 
             while (modsKeybind.wasPressed()) {
                 if (client.currentScreen == null) {
@@ -108,13 +124,21 @@ public class MCEFMod implements ClientModInitializer {
             }
 
             if (inWorld) {
-                PvPTracker.tick(client.player);
-                Autoclicker.tick(client);
+                if (client.player != null) {
+                    // PvPTracker - throttle to every 5 ticks (4Hz)
+                    pvpTickCounter++;
+                    if (pvpTickCounter >= PVP_TICK_INTERVAL) {
+                        pvpTickCounter = 0;
+                        PvPTracker.tick(client.player);
+                    }
+                    Autoclicker.tick(client);
+                }
                 
-                if ((tickCounter % 10) == 0) {
+                // WebUI updates - reduced frequency
+                if ((tickCounter % 20) == 0) { // Every 20 ticks (1Hz) - was 10 ticks
                     WebUIManager.getInstance().updateHud();
                     WebUIManager.getInstance().onStateChanged();
-                } else if ((tickCounter % 5) == 0) {
+                } else if ((tickCounter % 10) == 0) { // Every 10 ticks (2Hz) - was 5 ticks
                     WebUIManager.getInstance().onStateChanged();
                 }
                 
@@ -138,8 +162,8 @@ public class MCEFMod implements ClientModInitializer {
                         browserWasMinimized = false;
                     }
                     
-                    // Normal resize check every 20 ticks
-                    if ((tickCounter % 20) == 0 && overlayVisible) {
+                    // Normal resize check every 80 ticks (~2.5s, was 40 ticks)
+                    if ((tickCounter % 80) == 0 && overlayVisible) {
                         double scale = client.getWindow().getScaleFactor();
                         int width = (int)(client.getWindow().getScaledWidth() * scale);
                         int height = (int)(client.getWindow().getScaledHeight() * scale);
@@ -161,7 +185,7 @@ public class MCEFMod implements ClientModInitializer {
             return net.minecraft.util.ActionResult.PASS;
         });
 
-        // ULTRA-LIGHTWEIGHT HUD RENDER - skips entirely when overlay hidden
+        // ULTRA-LIGHTWEIGHT HUD RENDER - skips entirely when overlay hidden, throttled when visible
         HudRenderCallback.EVENT.register((context, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.world == null || client.currentScreen instanceof WebTitleScreen) return;
@@ -174,6 +198,8 @@ public class MCEFMod implements ClientModInitializer {
 
             GpuTextureView gpuTextureView = browser.getTextureView();
             if (gpuTextureView == null) return;
+
+
 
             int width = client.getWindow().getScaledWidth();
             int height = client.getWindow().getScaledHeight();

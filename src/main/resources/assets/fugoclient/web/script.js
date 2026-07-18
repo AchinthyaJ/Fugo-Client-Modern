@@ -1,6 +1,11 @@
 // State variables that persist
 // Driven by Java side session timer
 let currentUiState = { inWorld: true, isWebTitle: false, isOverlay: true, editMode: false };
+if (window.location.pathname.includes('titlescreen.html')) {
+    currentUiState.inWorld = false;
+    currentUiState.isWebTitle = true;
+    currentUiState.isOverlay = false;
+}
 
 function formatTime(totalSeconds) {
     const hrs = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
@@ -2187,6 +2192,28 @@ function manageSnowfallState() {
 }
 
 // ==========================================
+// THEME EDITOR LAUNCHER
+// ==========================================
+
+function launchThemeEditor() {
+    if (window.MinecraftBridge) {
+        window.MinecraftBridge.send('launch_editor')
+            .then(resp => {
+                console.log('[Fugo] Theme Editor launched on port:', resp.port || 8642);
+                // Show a toast notification
+                showAnimToast('🎨 Theme Editor opened in your browser!', 'info');
+            })
+            .catch(err => {
+                console.error('[Fugo] Failed to launch editor:', err);
+                showAnimToast('Failed to launch Theme Editor', 'error');
+            });
+    } else {
+        // Fallback for standalone testing — just open in a new tab
+        window.open('editor.html', '_blank');
+    }
+}
+
+// ==========================================
 // FUGO HUB WORKSPACE CONTROLLER
 // ==========================================
 
@@ -2836,11 +2863,46 @@ function renderFullGallery() {
 }
 
 // Ensure init loads properly on startup
+window.applyThemeData = function(data) {
+    if (!data) return;
+    for (const [k, v] of Object.entries(data)) {
+        if (k.startsWith('--')) {
+            document.documentElement.style.setProperty(k, v);
+        }
+    }
+    // Update fonts
+    if (data['--font-body']) {
+        document.documentElement.style.setProperty('--hub-font', data['--font-body']);
+        document.body.style.fontFamily = data['--font-body'];
+    }
+    if (data['--font-heading']) {
+        document.querySelectorAll('.widget-header, .speed-text, .target-title, .banner-title, .sidebar-title, .panel-section-title, .mountain-logo, .header-logo').forEach(el => {
+            el.style.fontFamily = data['--font-heading'];
+        });
+    }
+};
+
 window.addEventListener('DOMContentLoaded', () => {
     // Set initial active state
     switchHubApp('recipes');
     refreshHubData();
     initCustomization();
+
+    // Query Java for saved custom theme
+    if (window.MinecraftBridge) {
+        window.MinecraftBridge.send('theme:get')
+            .then(data => {
+                if (data && typeof data === 'object') {
+                    window.applyThemeData(data);
+                } else if (data && typeof data === 'string') {
+                    try {
+                        const parsed = JSON.parse(data);
+                        window.applyThemeData(parsed);
+                    } catch(e) {}
+                }
+            })
+            .catch(err => console.log('[Fugo Theme] No custom theme applied:', err));
+    }
 });
 
 // ==========================================
@@ -3400,4 +3462,146 @@ function openWeatherControlOverlay() {
 function closeWeatherControlOverlay() {
     const overlay = document.getElementById('weather-control-overlay');
     if (overlay) overlay.classList.add('hidden');
+}
+
+// ─── Main Menu Drag & Drop Layout Editor ───
+function initMenuDragAndDrop() {
+    const selectors = {
+        '--menu-logo': '.top-left-logo',
+        '--menu-profiles': '.title-profiles-btn',
+        '--menu-buttons': '.mid-left-panel',
+        '--menu-quickjoin': '.bottom-left-quickjoin',
+        '--menu-btn-singleplayer': '.btn-singleplayer',
+        '--menu-btn-multiplayer': '.btn-multiplayer',
+        '--menu-btn-settings': '.btn-settings',
+        '--menu-btn-quit': '.btn-quit'
+    };
+
+    Object.entries(selectors).forEach(([varPrefix, selector]) => {
+        const el = document.querySelector(selector);
+        if (!el) return;
+
+        // Prevent button actions when layout editor is enabled
+        el.addEventListener('click', (e) => {
+            if (window.parent && window.parent.isDraggingEnabled) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true);
+
+        // Visual indicator on hover
+        el.addEventListener('mouseenter', () => {
+            if (window.parent && window.parent.isDraggingEnabled) {
+                el.style.cursor = 'grab';
+            } else {
+                el.style.cursor = '';
+            }
+        });
+
+        let isDragging = false;
+        let startX, startY;
+        let origLeft, origTop, origRight, origBottom;
+        let origLeftOffset = 0, origTopOffset = 0;
+
+        el.addEventListener('mousedown', (e) => {
+            // Check if dragging is enabled in the parent context
+            if (!window.parent || !window.parent.isDraggingEnabled) return;
+            
+            isDragging = true;
+            el.style.cursor = 'grabbing';
+            e.preventDefault();
+            e.stopPropagation(); // prevent bubbling to parent container
+
+            const rect = el.getBoundingClientRect();
+            const parentRect = document.documentElement.getBoundingClientRect();
+
+            startX = e.clientX;
+            startY = e.clientY;
+
+            origLeft = rect.left;
+            origTop = rect.top;
+            origRight = parentRect.width - rect.right;
+            origBottom = parentRect.height - rect.bottom;
+
+            if (varPrefix.startsWith('--menu-btn-')) {
+                origLeftOffset = parseInt(getComputedStyle(el).getPropertyValue(varPrefix + '-left')) || 0;
+                origTopOffset = parseInt(getComputedStyle(el).getPropertyValue(varPrefix + '-top')) || 0;
+            }
+
+            const onMouseMove = (moveEvent) => {
+                if (!isDragging) return;
+                const dx = moveEvent.clientX - startX;
+                const dy = moveEvent.clientY - startY;
+
+                if (varPrefix.startsWith('--menu-btn-')) {
+                    const newTop = origTopOffset + dy;
+                    const newLeft = origLeftOffset + dx;
+                    document.documentElement.style.setProperty(varPrefix + '-top', newTop + 'px');
+                    document.documentElement.style.setProperty(varPrefix + '-left', newLeft + 'px');
+                    if (window.parent.updateVar) {
+                        window.parent.updateVar(varPrefix + '-top', newTop + 'px');
+                        window.parent.updateVar(varPrefix + '-left', newLeft + 'px');
+                    }
+                } else if (varPrefix === '--menu-profiles') {
+                    const newTop = Math.max(0, origTop + dy);
+                    const newRight = Math.max(0, origRight - dx);
+                    document.documentElement.style.setProperty('--menu-profiles-top', newTop + 'px');
+                    document.documentElement.style.setProperty('--menu-profiles-right', newRight + 'px');
+                    if (window.parent.updateVar) {
+                        window.parent.updateVar('--menu-profiles-top', newTop + 'px');
+                        window.parent.updateVar('--menu-profiles-right', newRight + 'px');
+                    }
+                } else if (varPrefix === '--menu-quickjoin') {
+                    const newBottom = Math.max(0, origBottom - dy);
+                    const newLeft = Math.max(0, origLeft + dx);
+                    document.documentElement.style.setProperty('--menu-quickjoin-bottom', newBottom + 'px');
+                    document.documentElement.style.setProperty('--menu-quickjoin-left', newLeft + 'px');
+                    if (window.parent.updateVar) {
+                        window.parent.updateVar('--menu-quickjoin-bottom', newBottom + 'px');
+                        window.parent.updateVar('--menu-quickjoin-left', newLeft + 'px');
+                    }
+                } else if (varPrefix === '--menu-buttons') {
+                    const newTop = Math.max(0, origTop + dy + rect.height/2);
+                    const newLeft = Math.max(0, origLeft + dx);
+                    document.documentElement.style.setProperty('--menu-buttons-top', newTop + 'px');
+                    document.documentElement.style.setProperty('--menu-buttons-left', newLeft + 'px');
+                    document.documentElement.style.setProperty('--menu-buttons-transform', 'none');
+                    if (window.parent.updateVar) {
+                        window.parent.updateVar('--menu-buttons-top', newTop + 'px');
+                        window.parent.updateVar('--menu-buttons-left', newLeft + 'px');
+                        window.parent.updateVar('--menu-buttons-transform', 'none');
+                    }
+                } else {
+                    const newTop = Math.max(0, origTop + dy);
+                    const newLeft = Math.max(0, origLeft + dx);
+                    document.documentElement.style.setProperty('--menu-logo-top', newTop + 'px');
+                    document.documentElement.style.setProperty('--menu-logo-left', newLeft + 'px');
+                    if (window.parent.updateVar) {
+                        window.parent.updateVar('--menu-logo-top', newTop + 'px');
+                        window.parent.updateVar('--menu-logo-left', newLeft + 'px');
+                    }
+                }
+            };
+
+            const onMouseUp = () => {
+                isDragging = false;
+                el.style.cursor = (window.parent && window.parent.isDraggingEnabled) ? 'grab' : '';
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    });
+}
+
+if (window.location.pathname.includes('titlescreen.html')) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(initMenuDragAndDrop, 100);
+        });
+    } else {
+        setTimeout(initMenuDragAndDrop, 100);
+    }
 }

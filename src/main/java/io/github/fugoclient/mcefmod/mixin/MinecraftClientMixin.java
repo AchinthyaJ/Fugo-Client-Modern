@@ -45,10 +45,8 @@ public abstract class MinecraftClientMixin implements MinecraftClientAccessor {
         this.doItemUse();
     }
 
-    @Inject(method = "render(Z)V", at = @At("HEAD"))
-    private void onRender(boolean tick, CallbackInfo ci) {
-        FreeLookHandler.update((MinecraftClient) (Object) this);
-    }
+    // FreeLookHandler.update() moved to MCEFMod tick handler (20Hz is sufficient for key checks)
+    // Removed per-frame render hook to save ~280+ unnecessary calls/sec
 
     @Inject(method = "disconnect(Lnet/minecraft/client/gui/screen/Screen;ZZ)V", at = @At("HEAD"))
     private void onDisconnectHead(net.minecraft.client.gui.screen.Screen screen, boolean transfer, boolean isMultiplayer, CallbackInfo ci) {

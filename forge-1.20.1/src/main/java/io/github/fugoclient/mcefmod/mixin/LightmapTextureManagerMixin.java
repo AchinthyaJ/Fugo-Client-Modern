@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.At;
 public class LightmapTextureManagerMixin {
 
     @ModifyExpressionValue(
-        method = "update",
+        method = "updateLightTexture",
         at = @At(
             value = "INVOKE",
             target = "Lnet/minecraft/client/OptionInstance;get()Ljava/lang/Object;"

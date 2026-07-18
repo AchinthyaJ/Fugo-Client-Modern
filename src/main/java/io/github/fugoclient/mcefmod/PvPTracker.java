@@ -24,6 +24,11 @@ public class PvPTracker {
     private static int winStreak = 0;
     private static int currentStreak = 0;
     private static boolean wasDead = false;
+    
+    // Cached timestamp to avoid repeated System.currentTimeMillis() calls
+    private static long cachedNow = 0;
+    private static boolean comboExpired = false;
+    private static boolean targetExpired = false;
 
     public static void onAttack(Entity target) {
         if (!(target instanceof LivingEntity)) return;
@@ -67,6 +72,10 @@ public class PvPTracker {
     public static void tick(net.minecraft.client.network.ClientPlayerEntity player) {
         if (player == null) return;
         
+        cachedNow = System.currentTimeMillis();
+        comboExpired = cachedNow - lastHitTime > 3000;
+        targetExpired = cachedNow - lastTargetTime > 5000;
+        
         // 1. Detect death
         boolean isDead = player.isDead() || player.getHealth() <= 0;
         if (isDead && !wasDead) {
@@ -75,7 +84,7 @@ public class PvPTracker {
         wasDead = isDead;
 
         // 2. Simple kill detector (skip if no target or expired)
-        if (lastTargetTime > 0 && targetId != -1 && System.currentTimeMillis() - lastTargetTime < 5000) {
+        if (lastTargetTime > 0 && targetId != -1 && !targetExpired) {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.world != null) {
                 Entity e = client.world.getEntityById(targetId);
@@ -106,7 +115,7 @@ public class PvPTracker {
     }
 
     public static int getCombo() {
-        if (System.currentTimeMillis() - lastHitTime > 3000) {
+        if (comboExpired) {
             combo = 0;
         }
         return combo;
@@ -121,7 +130,7 @@ public class PvPTracker {
     }
 
     public static String getTargetName() {
-        if (System.currentTimeMillis() - lastTargetTime > 5000) {
+        if (targetExpired) {
             targetName = "";
         }
         return targetName;

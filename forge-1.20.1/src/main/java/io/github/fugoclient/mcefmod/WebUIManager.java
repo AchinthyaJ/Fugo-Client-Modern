@@ -9,9 +9,8 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffectCategory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.montoyo.mcef.api.MCEFApi;
-import net.montoyo.mcef.api.IBrowser;
-import net.montoyo.mcef.api.API;
+import com.cinemamod.mcef.MCEF;
+import com.cinemamod.mcef.MCEFBrowser;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -38,7 +37,7 @@ public class WebUIManager {
         return fullbrightEnabled;
     }
     
-    private IBrowser browser;
+    private MCEFBrowser browser;
     private WebTitleScreen titleScreen;
     private boolean isOverlayVisible = false;
     private String currentPage = "";
@@ -77,6 +76,13 @@ public class WebUIManager {
     private int lastSentLmbCps = -1;
     private int lastSentRmbCps = -1;
 
+    private static final long STATS_MIN_INTERVAL_MS = 500;
+    private long lastStatsSentTime = 0;
+    private long lastHudKeysOnlyTime = 0;
+    private long lastStatsHash = 0;
+    private final StringBuilder statsSb = new StringBuilder(1024);
+    private final StringBuilder reusableSb = new StringBuilder(256);
+
     private WebUIManager() {
     }
 
@@ -86,40 +92,50 @@ public class WebUIManager {
 
     public void init() {
         extractResources();
-
-        // Get API instance and register router/create browser
-        API api = MCEFApi.getAPI();
-        if (api != null) {
-            try {
-                api.registerJSQueryHandler(new MinecraftJSBridge());
-                System.out.println("[Fugo Client] JS Query Handler registered successfully!");
-            } catch (Exception e) {
-                System.err.println("[Fugo Client] Failed to register JS query handler!");
-                e.printStackTrace();
-            }
-
-            // Prepare local URL
-            File indexFile = new File(Minecraft.getInstance().gameDirectory, "web-ui/titlescreen.html");
-            String url = "file://" + indexFile.getAbsolutePath();
-            currentPage = "titlescreen";
-            System.out.println("[Fugo Client] Loading URL: " + url);
-
-            // Create browser (transparent = true)
-            browser = api.createBrowser(url, true);
-
-            // Set initial size
-            Minecraft client = Minecraft.getInstance();
-            double scale = client.getWindow().getGuiScale();
-            browser.resize(
-                (int) (client.getWindow().getGuiScaledWidth() * scale),
-                (int) (client.getWindow().getGuiScaledHeight() * scale)
-            );
-        } else {
-            System.err.println("[Fugo Client] MCEF API is null! Delayed initialization might be required.");
-        }
+        try { JCEFHelper.registerSandboxBypass(); } catch (Throwable ignored) {}
     }
 
-    public IBrowser getBrowser() {
+    /**
+     * Lazily create the browser once MCEF is initialized (called from the render thread).
+     * MCEF auto-initializes via its own mixins during game startup, so creating the
+     * browser must be deferred until then (and until the Minecraft window exists).
+     */
+    public void ensureBrowser() {
+        if (browser != null) return;
+        if (!MCEF.isInitialized()) return;
+
+        try {
+            org.cef.CefClient cefClient = MCEF.getClient().getHandle();
+            var config = new org.cef.browser.CefMessageRouter.CefMessageRouterConfig("mcefQuery", "mcefQueryCancel");
+            var msgRouter = org.cef.browser.CefMessageRouter.create(config);
+            msgRouter.addHandler(new MinecraftJSBridge(), true);
+            cefClient.addMessageRouter(msgRouter);
+            System.out.println("[Fugo Client] JS Query Handler registered successfully!");
+        } catch (Exception e) {
+            System.err.println("[Fugo Client] Failed to register JS query handler!");
+            e.printStackTrace();
+        }
+
+        File indexFile = new File(Minecraft.getInstance().gameDirectory, "web-ui/titlescreen.html");
+        String url = "file://" + indexFile.getAbsolutePath();
+        currentPage = "titlescreen";
+        System.out.println("[Fugo Client] Loading URL: " + url);
+
+        browser = MCEF.createBrowser(url, true);
+        resizeToWindow();
+    }
+
+    private void resizeToWindow() {
+        Minecraft client = Minecraft.getInstance();
+        if (client.getWindow() == null || browser == null) return;
+        double scale = client.getWindow().getGuiScale();
+        browser.resize(
+            (int) (client.getWindow().getGuiScaledWidth() * scale),
+            (int) (client.getWindow().getGuiScaledHeight() * scale)
+        );
+    }
+
+    public MCEFBrowser getBrowser() {
         return browser;
     }
 
@@ -173,23 +189,16 @@ public class WebUIManager {
     }
 
     public void updateHud() {
-        IBrowser browser = getBrowser();
+        MCEFBrowser browser = getBrowser();
         if (browser == null) return;
 
         Minecraft client = Minecraft.getInstance();
         if (client.level == null || client.player == null) return;
 
         long now = System.currentTimeMillis();
-
-        // Skip expensive HUD calcs during first 10s of startup (JIT warmup phase)
-        boolean isWarmingUp = (now - STARTUP_TIME) < 10000;
-        if (isWarmingUp && (now - lastCoordsTime) < 1000) {
-            return;
-        }
-
         LocalPlayer player = client.player;
 
-        // 1. Keys & CPS - event-driven (lowest latency)
+        // 1. Keys & CPS - throttled to 100ms to prevent JS flood
         boolean w = client.options.keyUp.isDown();
         boolean a = client.options.keyLeft.isDown();
         boolean s = client.options.keyDown.isDown();
@@ -208,49 +217,51 @@ public class WebUIManager {
         int lmbCps = getCps(false);
         int rmbCps = getCps(true);
 
-        boolean changed = (w != lastW || a != lastA || s != lastS || d != lastD || space != lastSpace ||
+        boolean keysChanged = (w != lastW || a != lastA || s != lastS || d != lastD || space != lastSpace ||
                            lmb != lastLmb || rmb != lastRmb || shift != lastShift || sprint != lastSprint ||
                            lmbCps != lastSentLmbCps || rmbCps != lastSentRmbCps);
 
-        // Update keystroke state (always compute for data freshness)
         lastW = w; lastA = a; lastS = s; lastD = d; lastSpace = space;
         lastLmb = lmb; lastRmb = rmb; lastShift = shift; lastSprint = sprint;
 
-        // Only send keystrokes to overlay if it's visible and state changed
-        if (isOverlayVisible && changed && (now - lastKeystrokeTime >= 50)) {
+        if (isOverlayVisible && keysChanged && (now - lastKeystrokeTime >= 100)) {
             lastKeystrokeTime = now;
             lastSentLmbCps = lmbCps;
             lastSentRmbCps = rmbCps;
-            StringBuilder sb = new StringBuilder(96);
-            sb.append("{\"w\":").append(w).append(",\"a\":").append(a).append(",\"s\":").append(s)
-              .append(",\"d\":").append(d).append(",\"space\":").append(space).append(",\"lmb\":").append(lmb)
-              .append(",\"rmb\":").append(rmb).append(",\"shift\":").append(shift).append(",\"sprint\":").append(sprint)
-              .append(",\"lmbCps\":").append(lmbCps).append(",\"rmbCps\":").append(rmbCps).append("}");
-            browser.runJavaScript("window.MinecraftBridge.trigger('hud:update_keys'," + sb.toString() + ");");
+            reusableSb.setLength(0);
+            reusableSb.append("window.MinecraftBridge.trigger('hud:update_keys',{\"w\":").append(w)
+                      .append(",\"a\":").append(a).append(",\"s\":").append(s).append(",\"d\":").append(d)
+                      .append(",\"space\":").append(space).append(",\"lmb\":").append(lmb).append(",\"rmb\":").append(rmb)
+                      .append(",\"shift\":").append(shift).append(",\"sprint\":").append(sprint)
+                      .append(",\"lmbCps\":").append(lmbCps).append(",\"rmbCps\":").append(rmbCps).append("});");
+            browser.executeJavaScript(reusableSb.toString(), "", 0);
         }
 
-        // 2. Stats update - always calculate (fresh data), but only send if visible
-        if (now - lastCoordsTime < 500) {
-            // Still update state changes since those affect everything
-            boolean interactive = client.screen instanceof WebTitleScreen && ((WebTitleScreen) client.screen).isOverlay();
-            boolean editMode = interactive && ((WebTitleScreen) client.screen).isEditMode();
-            if (lastInteractive == null || lastEditMode == null || interactive != lastInteractive || editMode != lastEditMode) {
-                lastInteractive = interactive;
-                lastEditMode = editMode;
-                if (isOverlayVisible) {
-                    browser.runJavaScript(
-                        "window.MinecraftBridge.trigger('hud:update_interactive',{\"interactive\":" + interactive + ",\"editMode\":" + editMode + "});");
-                }
+        // 2. Stats update - throttled to 500ms (2Hz) to eliminate rendering stutter
+        if (now - lastStatsSentTime < STATS_MIN_INTERVAL_MS) return;
+        lastStatsSentTime = now;
+
+        // Interactive state check
+        boolean interactive = client.screen instanceof WebTitleScreen && ((WebTitleScreen) client.screen).isOverlay();
+        boolean editMode = interactive && ((WebTitleScreen) client.screen).isEditMode();
+        if (lastInteractive == null || lastEditMode == null || interactive != lastInteractive || editMode != lastEditMode) {
+            lastInteractive = interactive;
+            lastEditMode = editMode;
+            if (isOverlayVisible) {
+                reusableSb.setLength(0);
+                reusableSb.append("window.MinecraftBridge.trigger('hud:update_interactive',{\"interactive\":")
+                          .append(interactive).append(",\"editMode\":").append(editMode).append("});");
+                browser.executeJavaScript(reusableSb.toString(), "", 0);
             }
-            return;
         }
-        lastCoordsTime = now;
+
         if (now - lastSessionTime >= 1000) {
             lastSessionTime = now;
             secondsElapsed++;
         }
 
-        // Get FPS: client.getFps()
+        if (!isOverlayVisible) return;
+
         int fps = client.getFps();
         int ping = 0;
         if (client.getConnection() != null && player.getUUID() != null) {
@@ -264,6 +275,43 @@ public class WebUIManager {
         String direction = player.getDirection().name().toUpperCase();
         double xSpeed = player.getX() - player.xo, zSpeed = player.getZ() - player.zo;
         double bps = Math.sqrt(xSpeed * xSpeed + zSpeed * zSpeed) * 20.0;
+        int bpsInt = (int)(bps * 100 + 0.5);
+
+        int healthVal = Math.round(player.getHealth());
+        int maxHealthVal = Math.round(player.getMaxHealth());
+        int hungerVal = player.getFoodData().getFoodLevel();
+        int xpLevelVal = player.experienceLevel;
+        int px = (int) x;
+        int py = (int) y;
+        int pz = (int) z;
+        int facingOrdinal = player.getDirection().ordinal();
+        int targetHealthVal = Math.round(PvPTracker.getTargetHealth());
+        int targetDistInt = (int)(PvPTracker.getTargetDistance() * 100 + 0.5);
+        int comboVal = PvPTracker.getCombo();
+        int killsVal = PvPTracker.getKills();
+        int deathsVal = PvPTracker.getDeaths();
+
+        // Calculate numeric hash to check if any data has changed before building the payload
+        long hash = fps;
+        hash = hash * 31 + ping;
+        hash = hash * 31 + secondsElapsed;
+        hash = hash * 31 + killsVal;
+        hash = hash * 31 + deathsVal;
+        hash = hash * 31 + comboVal;
+        hash = hash * 31 + healthVal;
+        hash = hash * 31 + maxHealthVal;
+        hash = hash * 31 + hungerVal;
+        hash = hash * 31 + xpLevelVal;
+        hash = hash * 31 + px;
+        hash = hash * 31 + py;
+        hash = hash * 31 + pz;
+        hash = hash * 31 + facingOrdinal;
+        hash = hash * 31 + bpsInt;
+        hash = hash * 31 + targetHealthVal;
+        hash = hash * 31 + targetDistInt;
+
+        if (hash == lastStatsHash) return;
+        lastStatsHash = hash;
 
         Runtime runtime = Runtime.getRuntime();
         long memUsed = (runtime.totalMemory() - runtime.freeMemory()) >> 20;
@@ -281,32 +329,71 @@ public class WebUIManager {
         int itemCount = mainHand.getCount();
         float itemCooldown = mainHand.isEmpty() ? 0 : player.getCooldowns().getCooldownPercent(mainHand.getItem(), 0.0f);
 
-        StringBuilder potions = new StringBuilder("[");
-        boolean first = true;
-        for (MobEffectInstance e : player.getActiveEffects()) {
-            if (!first) potions.append(",");
-            int durationSecs = e.getDuration() / 20;
-            boolean beneficial = e.getEffect().getCategory().equals(MobEffectCategory.BENEFICIAL);
-            potions.append("{\"name\":\"").append(e.getEffect().getDisplayName().getString())
-                  .append("\",\"duration\":\"").append(durationSecs / 60).append(":").append(String.format(Locale.US, "%02d", durationSecs % 60))
-                  .append("\",\"amp\":").append(e.getAmplifier() + 1).append(",\"beneficial\":").append(beneficial)
-                  .append(",\"color\":").append(e.getEffect().getColor()).append("}");
-            first = false;
-        }
-        potions.append("]");
+        statsSb.setLength(0);
+        statsSb.append("window.MinecraftBridge.trigger('hud:update_stats',{")
+            .append("\"fps\":").append(fps).append(",\"ping\":").append(ping)
+            .append(",\"bps\":").append(bpsInt / 100.0).append(",\"memUsed\":").append(memUsed)
+            .append(",\"memMax\":").append(memMax).append(",\"frameTime\":").append(String.format(Locale.US, "%.2f", fps > 0 ? 1000.0/fps : 0))
+            .append(",\"x\":").append(String.format(Locale.US, "%.1f", x)).append(",\"y\":").append(String.format(Locale.US, "%.1f", y))
+            .append(",\"z\":").append(String.format(Locale.US, "%.1f", z)).append(",\"facing\":\"").append(direction)
+            .append("\",\"yaw\":").append(String.format(Locale.US, "%.1f", player.getYRot())).append(",\"biome\":\"").append(biome)
+            .append("\",\"cx\":").append(cx).append(",\"cz\":").append(cz)
+            .append(",\"netherX\":").append(String.format(Locale.US, "%.1f", netherX)).append(",\"netherZ\":").append(String.format(Locale.US, "%.1f", netherZ))
+            .append(",\"health\":").append(healthVal)
+            .append(",\"maxHealth\":").append(maxHealthVal)
+            .append(",\"hunger\":").append(hungerVal)
+            .append(",\"absorption\":").append(String.format(Locale.US, "%.1f", player.getAbsorptionAmount()))
+            .append(",\"air\":").append(player.getAirSupply()).append(",\"maxAir\":").append(player.getMaxAirSupply())
+            .append(",\"xp\":").append(String.format(Locale.US, "%.2f", player.experienceProgress))
+            .append(",\"xpLevel\":").append(xpLevelVal)
+            .append(",\"sneaking\":").append(player.isShiftKeyDown()).append(",\"sprinting\":").append(player.isSprinting())
+            .append(",\"combo\":").append(comboVal).append(",\"reach\":").append(String.format(Locale.US, "%.2f", PvPTracker.getReach()))
+            .append(",\"targetName\":\"").append(PvPTracker.getTargetName().replace("\"", "\\\""))
+            .append("\",\"targetHealth\":").append(targetHealthVal)
+            .append(",\"targetMaxHealth\":").append(String.format(Locale.US, "%.1f", PvPTracker.getTargetMaxHealth()))
+            .append(",\"targetDistance\":").append(targetDistInt / 100.0);
+
+        String[] targetArmor = PvPTracker.getTargetArmor();
+        statsSb.append(",\"targetArmor\":[\"").append(targetArmor[0] != null ? targetArmor[0] : "").append("\",\"")
+            .append(targetArmor[1] != null ? targetArmor[1] : "").append("\",\"")
+            .append(targetArmor[2] != null ? targetArmor[2] : "").append("\",\"")
+            .append(targetArmor[3] != null ? targetArmor[3] : "").append("\"]")
+            .append(",\"sessionTime\":").append(secondsElapsed).append(",\"kills\":").append(killsVal)
+            .append(",\"deaths\":").append(deathsVal).append(",\"winStreak\":").append(PvPTracker.getWinStreak())
+            .append(",\"currentStreak\":").append(PvPTracker.getCurrentStreak());
+
+        String serverName = client.getCurrentServer() != null ? client.getCurrentServer().name : "Singleplayer";
+        String serverIp = client.getCurrentServer() != null ? client.getCurrentServer().ip : "127.0.0.1";
+        int serverPlayers = client.getConnection() != null ? client.getConnection().getOnlinePlayers().size() : 1;
+
+        statsSb.append(",\"serverName\":\"").append(serverName.replace("\"", "\\\""))
+            .append("\",\"serverIp\":\"").append(serverIp.replace("\"", "\\\"")).append("\",\"serverPlayers\":").append(serverPlayers);
 
         Scoreboard sb2 = client.level.getScoreboard();
-        Objective obj = sb2.getDisplayObjective(1); // 1 is sidebar
-        StringBuilder scoreboard = new StringBuilder("[");
-        first = true;
+        Objective obj = sb2.getDisplayObjective(1);
+        statsSb.append(",\"scoreboard\":[");
+        boolean first = true;
         if (obj != null) {
             for (Score e : sb2.getPlayerScores(obj)) {
-                if (!first) scoreboard.append(",");
-                scoreboard.append("\"").append(e.getOwner().replace("\"", "\\\"")).append("\"");
+                if (!first) statsSb.append(",");
+                statsSb.append("\"").append(e.getOwner().replace("\"", "\\\"")).append("\"");
                 first = false;
             }
         }
-        scoreboard.append("]");
+        statsSb.append("],\"potions\":[");
+
+        first = true;
+        for (MobEffectInstance e : player.getActiveEffects()) {
+            if (!first) statsSb.append(",");
+            int durationSecs = e.getDuration() / 20;
+            boolean beneficial = e.getEffect().getCategory().equals(MobEffectCategory.BENEFICIAL);
+            statsSb.append("{\"name\":\"").append(e.getEffect().getDisplayName().getString())
+                   .append("\",\"duration\":\"").append(durationSecs / 60).append(":").append(String.format(Locale.US, "%02d", durationSecs % 60))
+                   .append("\",\"amp\":").append(e.getAmplifier() + 1).append(",\"beneficial\":").append(beneficial)
+                   .append(",\"color\":").append(e.getEffect().getColor()).append("}");
+            first = false;
+        }
+        statsSb.append("]");
 
         String helmetJson = getArmorJson(player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD));
         String chestJson = getArmorJson(player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST));
@@ -314,64 +401,24 @@ public class WebUIManager {
         String bootsJson = getArmorJson(player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET));
         String offhandJson = getArmorJson(player.getOffhandItem());
 
-        String serverName = client.getCurrentServer() != null ? client.getCurrentServer().name : "Singleplayer";
-        String serverIp = client.getCurrentServer() != null ? client.getCurrentServer().ip : "127.0.0.1";
-        int serverPlayers = client.getConnection() != null ? client.getConnection().getOnlinePlayers().size() : 1;
-
-        String[] targetArmor = PvPTracker.getTargetArmor();
-        long worldTime = client.level.getDayTime();
-
-        StringBuilder json = new StringBuilder(1024);
-        json.append("{\"fps\":").append(fps).append(",\"ping\":").append(ping)
-            .append(",\"bps\":").append(String.format(Locale.US, "%.2f", bps)).append(",\"memUsed\":").append(memUsed)
-            .append(",\"memMax\":").append(memMax).append(",\"frameTime\":").append(String.format(Locale.US, "%.2f", fps > 0 ? 1000.0/fps : 0))
-            .append(",\"x\":").append(String.format(Locale.US, "%.1f", x)).append(",\"y\":").append(String.format(Locale.US, "%.1f", y))
-            .append(",\"z\":").append(String.format(Locale.US, "%.1f", z)).append(",\"facing\":\"").append(direction)
-            .append("\",\"yaw\":").append(String.format(Locale.US, "%.1f", player.getYRot())).append(",\"biome\":\"").append(biome)
-            .append("\",\"cx\":").append(cx).append(",\"cz\":").append(cz)
-            .append(",\"netherX\":").append(String.format(Locale.US, "%.1f", netherX)).append(",\"netherZ\":").append(String.format(Locale.US, "%.1f", netherZ))
-            .append(",\"health\":").append(String.format(Locale.US, "%.1f", player.getHealth()))
-            .append(",\"maxHealth\":").append(String.format(Locale.US, "%.1f", player.getMaxHealth()))
-            .append(",\"hunger\":").append(player.getFoodData().getFoodLevel())
-            .append(",\"absorption\":").append(String.format(Locale.US, "%.1f", player.getAbsorptionAmount()))
-            .append(",\"air\":").append(player.getAirSupply()).append(",\"maxAir\":").append(player.getMaxAirSupply())
-            .append(",\"xp\":").append(String.format(Locale.US, "%.2f", player.experienceProgress))
-            .append(",\"xpLevel\":").append(player.experienceLevel)
-            .append(",\"sneaking\":").append(player.isShiftKeyDown()).append(",\"sprinting\":").append(player.isSprinting())
-            .append(",\"combo\":").append(PvPTracker.getCombo()).append(",\"reach\":").append(String.format(Locale.US, "%.2f", PvPTracker.getReach()))
-            .append(",\"targetName\":\"").append(PvPTracker.getTargetName().replace("\"", "\\\""))
-            .append("\",\"targetHealth\":").append(String.format(Locale.US, "%.1f", PvPTracker.getTargetHealth()))
-            .append(",\"targetMaxHealth\":").append(String.format(Locale.US, "%.1f", PvPTracker.getTargetMaxHealth()))
-            .append(",\"targetDistance\":").append(String.format(Locale.US, "%.2f", PvPTracker.getTargetDistance()))
-            .append(",\"targetArmor\":[\"").append(targetArmor[0] != null ? targetArmor[0] : "").append("\",\"")
-            .append(targetArmor[1] != null ? targetArmor[1] : "").append("\",\"")
-            .append(targetArmor[2] != null ? targetArmor[2] : "").append("\",\"")
-            .append(targetArmor[3] != null ? targetArmor[3] : "").append("\"]")
-            .append(",\"sessionTime\":").append(secondsElapsed).append(",\"kills\":").append(PvPTracker.getKills())
-            .append(",\"deaths\":").append(PvPTracker.getDeaths()).append(",\"winStreak\":").append(PvPTracker.getWinStreak())
-            .append(",\"currentStreak\":").append(PvPTracker.getCurrentStreak())
-            .append(",\"serverName\":\"").append(serverName.replace("\"", "\\\""))
-            .append("\",\"serverIp\":\"").append(serverIp.replace("\"", "\\\"")).append("\",\"serverPlayers\":").append(serverPlayers)
-            .append(",\"scoreboard\":").append(scoreboard).append(",\"potions\":").append(potions)
-            .append(",\"item\":{\"name\":\"").append(itemName.replace("\"", "\\\"")).append("\",\"durability\":").append(itemDmg)
+        statsSb.append(",\"item\":{\"name\":\"").append(itemName.replace("\"", "\\\"")).append("\",\"durability\":").append(itemDmg)
             .append(",\"maxDurability\":").append(itemMaxDmg).append(",\"count\":").append(itemCount)
             .append(",\"cooldown\":").append(String.format(Locale.US, "%.2f", itemCooldown)).append("}")
             .append(",\"armor\":{\"helmet\":").append(helmetJson).append(",\"chest\":").append(chestJson)
             .append(",\"leggings\":").append(leggingsJson).append(",\"boots\":").append(bootsJson)
-            .append(",\"offhand\":").append(offhandJson).append("}")
-            .append(",\"utility\":{\"day\":").append(worldTime / 24000)
+            .append(",\"offhand\":").append(offhandJson).append("}");
+
+        long worldTime = client.level.getDayTime();
+        statsSb.append(",\"utility\":{\"day\":").append(worldTime / 24000)
             .append(",\"weather\":\"").append(client.level.isThundering() ? "Thunder" : (client.level.isRaining() ? "Rain" : "Clear"))
             .append("\",\"time\":\"").append(String.format(Locale.US, "%02d:%02d", (worldTime / 1000 + 6) % 24, (worldTime % 1000) * 60 / 1000))
-            .append("\"}}");
+            .append("\"}});");
 
-        // Only send to browser if overlay visible (calculations still happen for fresh data)
-        if (isOverlayVisible) {
-            browser.runJavaScript("window.MinecraftBridge.trigger('hud:update_stats'," + json.toString() + ");");
-        }
+        browser.executeJavaScript(statsSb.toString(), "", 0);
     }
 
     public void updateHudKeysOnly() {
-        IBrowser browser = getBrowser();
+        MCEFBrowser browser = getBrowser();
         if (browser == null) {
             return;
         }
@@ -415,7 +462,7 @@ public class WebUIManager {
         
         String json = String.format(Locale.US, "{\"w\":%b,\"a\":%b,\"s\":%b,\"d\":%b,\"space\":%b,\"lmb\":%b,\"rmb\":%b,\"shift\":%b,\"sprint\":%b,\"lmbCps\":%d,\"rmbCps\":%d}",
             w, a, s, d, space, lmb, rmb, shift, sprint, lmbCps, rmbCps);
-        browser.runJavaScript("window.MinecraftBridge.trigger('hud:update_keys', " + json + ");");
+        browser.executeJavaScript("window.MinecraftBridge.trigger('hud:update_keys', " + json + ");", "", 0);
     }
 
     public boolean isOverlayVisible() {
@@ -434,7 +481,7 @@ public class WebUIManager {
     }
 
     public void onStateChanged() {
-        IBrowser browser = getBrowser();
+        MCEFBrowser browser = getBrowser();
         if (browser == null) return;
 
         Minecraft client = Minecraft.getInstance();
@@ -466,11 +513,11 @@ public class WebUIManager {
             StringBuilder json = new StringBuilder();
             json.append("{\"inWorld\":").append(inWorld).append(",\"isWebTitle\":").append(isWebTitle)
                 .append(",\"isOverlay\":").append(isOverlay).append(",\"editMode\":").append(isEditMode).append("}");
-            browser.runJavaScript("window.MinecraftBridge.trigger('ui:state_change'," + json.toString() + ");");
+            browser.executeJavaScript("window.MinecraftBridge.trigger('ui:state_change'," + json.toString() + ");", "", 0);
 
             if (isWebTitle) {
-                browser.runJavaScript(
-                    "window.MinecraftBridge.trigger('overlay:toggle',{\"visible\":" + isOverlay + ",\"editMode\":" + isEditMode + "});");
+                browser.executeJavaScript(
+                    "window.MinecraftBridge.trigger('overlay:toggle',{\"visible\":" + isOverlay + ",\"editMode\":" + isEditMode + "});", "", 0);
             }
         }
     }
@@ -495,6 +542,9 @@ public class WebUIManager {
         extractFile("/assets/fugoclient/web/script.js", new File(webDir, "script.js"));
         extractFile("/assets/fugoclient/web/minecraft.ico", new File(webDir, "minecraft.ico"));
         extractFile("/assets/fugoclient/web/launcherbackground.png", new File(webDir, "launcherbackground.png"));
+        extractFile("/assets/fugoclient/web/editor.html", new File(webDir, "editor.html"));
+        extractFile("/assets/fugoclient/web/editor.css", new File(webDir, "editor.css"));
+        extractFile("/assets/fugoclient/web/editor.js", new File(webDir, "editor.js"));
     }
 
     private void extractFile(String resourcePath, File destFile) {

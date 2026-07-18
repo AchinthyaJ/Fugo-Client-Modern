@@ -2,12 +2,17 @@
 
 # Fugo Client Custom Multi-Version Gradle Wrapper
 USE_GRADLE_9=false
+EXTRA_ARGS=()
 for arg in "$@"; do
-    if [[ "$arg" == *":fabric-1.21.11"* ]]; then
+    if [[ "$arg" == *"1.21"* ]]; then
         USE_GRADLE_9=true
         break
     fi
 done
+
+if [ "$USE_GRADLE_9" = true ]; then
+    EXTRA_ARGS+=("-Pfugo.includeModern=true")
+fi
 
 if [ "$USE_GRADLE_9" = true ]; then
     GRADLE_VERSION="9.2.0"
@@ -60,4 +65,4 @@ if [ -z "$GRADLE_BIN" ] || [ ! -f "$GRADLE_BIN" ]; then
 fi
 
 # Execute the Gradle command with arguments
-exec "$GRADLE_BIN" "$@"
+exec "$GRADLE_BIN" "${EXTRA_ARGS[@]}" "$@"

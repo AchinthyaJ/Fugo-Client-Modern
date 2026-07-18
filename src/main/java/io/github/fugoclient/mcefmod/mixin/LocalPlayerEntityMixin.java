@@ -11,7 +11,8 @@ import io.github.fugoclient.mcefmod.Autoclicker;
 public class LocalPlayerEntityMixin {
     @Inject(method = "tick()V", at = @At("HEAD"))
     private void onTick(CallbackInfo ci) {
-        if (Autoclicker.isActive() && Autoclicker.isEnabled()) {
+        // Fast path: skip if autoclicker not active (99.9% of time)
+        if (Autoclicker.isEnabled() && Autoclicker.isActive()) {
             ClientPlayerEntityAccessor accessor = (ClientPlayerEntityAccessor) this;
             // Reset attack cooldown to allow rapid clicks
             accessor.setTicksSinceLastAttack(0);

@@ -4,20 +4,16 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.montoyo.mcef.api.IBrowser;
+import com.cinemamod.mcef.MCEFBrowser;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.*;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
 import org.lwjgl.glfw.GLFW;
 
-import java.awt.Canvas;
-import java.awt.event.KeyEvent;
-
 public class WebTitleScreen extends Screen {
     private final boolean isOverlay;
     private final boolean isEditMode;
-    private static final Canvas DUMMY_CANVAS = new Canvas();
 
     public WebTitleScreen(boolean isOverlay) {
         this(isOverlay, false);
@@ -47,9 +43,8 @@ public class WebTitleScreen extends Screen {
         double scale = getScaleFactor();
         WebUIManager.getInstance().resize((int) (this.width * scale), (int) (this.height * scale));
 
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser != null) {
-            // MCEF IBrowser doesn't have setFocus, we can ignore it or let MCEF handle it
             WebUIManager.getInstance().resetStateCache();
             WebUIManager.getInstance().onStateChanged();
         }
@@ -60,14 +55,16 @@ public class WebTitleScreen extends Screen {
         if (!isOverlay) {
             guiGraphics.fill(0, 0, this.width, this.height, 0xFF0A0B10);
         }
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
-        int textureId = (browser != null) ? browser.getTextureID() : 0;
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
+        int textureId = (browser != null) ? browser.getRenderer().getTextureID() : 0;
 
         if (textureId > 0) {
+            RenderSystem.enableBlend();
+            RenderSystem.defaultBlendFunc();
             RenderSystem.setShaderTexture(0, textureId);
             RenderSystem.setShader(GameRenderer::getPositionTexShader);
 
-            Tessellator tessellator = Tessellator.getInstance();
+            Tesselator tessellator = Tesselator.getInstance();
             BufferBuilder bufferBuilder = tessellator.getBuilder();
 
             Matrix4f matrix = guiGraphics.pose().last().pose();
@@ -77,6 +74,7 @@ public class WebTitleScreen extends Screen {
             bufferBuilder.vertex(matrix, (float) width, 0.0f, 0.0f).uv(1.0f, 0.0f).endVertex();
             bufferBuilder.vertex(matrix, 0.0f, 0.0f, 0.0f).uv(0.0f, 0.0f).endVertex();
             tessellator.end();
+            RenderSystem.disableBlend();
         } else {
             guiGraphics.drawCenteredString(
                 this.font,
@@ -91,82 +89,60 @@ public class WebTitleScreen extends Screen {
 
     @Override
     public void mouseMoved(double mouseX, double mouseY) {
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser != null) {
             double scale = getScaleFactor();
-            browser.sendMouseMoveEvent((int) (mouseX * scale), (int) (mouseY * scale), false);
+            browser.sendMouseMove((int) (mouseX * scale), (int) (mouseY * scale));
         }
         super.mouseMoved(mouseX, mouseY);
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser != null) {
             double scale = getScaleFactor();
             int scaledX = (int) (mouseX * scale);
             int scaledY = (int) (mouseY * scale);
-            // Map GLFW mouse button to JCEF mouse button:
-            // GLFW: 0 = LEFT, 1 = RIGHT, 2 = MIDDLE
-            // JCEF: 0 = LEFT, 1 = MIDDLE, 2 = RIGHT
-            int jcefButton = 0;
-            if (button == 1) jcefButton = 2; // Right
-            else if (button == 2) jcefButton = 1; // Middle
-            browser.sendMouseClickEvent(scaledX, scaledY, jcefButton, false, 1);
+            // GLFW mouse button: 0 = LEFT, 1 = RIGHT, 2 = MIDDLE (CinemaMod MCEF expects GLFW convention directly)
+            browser.sendMousePress(scaledX, scaledY, button);
+            browser.setFocus(true);
         }
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser != null) {
             double scale = getScaleFactor();
             int scaledX = (int) (mouseX * scale);
             int scaledY = (int) (mouseY * scale);
-            int jcefButton = 0;
-            if (button == 1) jcefButton = 2;
-            else if (button == 2) jcefButton = 1;
-            browser.sendMouseClickEvent(scaledX, scaledY, jcefButton, true, 1);
+            browser.sendMouseRelease(scaledX, scaledY, button);
+            browser.setFocus(true);
         }
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
-        // Forward mouse wheel/scroll if supported by IBrowser, otherwise ignore
-        // Many MCEF versions do not expose scroll, so we can ignore or let standard CEF handle
-        return super.mouseScrolled(mouseX, mouseY, amount);
-    }
-
-    private static int mapGlfwToAwt(int glfwKey) {
-        switch (glfwKey) {
-            case GLFW.GLFW_KEY_BACKSPACE: return KeyEvent.VK_BACK_SPACE;
-            case GLFW.GLFW_KEY_TAB: return KeyEvent.VK_TAB;
-            case GLFW.GLFW_KEY_ENTER: return KeyEvent.VK_ENTER;
-            case GLFW.GLFW_KEY_ESCAPE: return KeyEvent.VK_ESCAPE;
-            case GLFW.GLFW_KEY_SPACE: return KeyEvent.VK_SPACE;
-            case GLFW.GLFW_KEY_LEFT: return KeyEvent.VK_LEFT;
-            case GLFW.GLFW_KEY_UP: return KeyEvent.VK_UP;
-            case GLFW.GLFW_KEY_RIGHT: return KeyEvent.VK_RIGHT;
-            case GLFW.GLFW_KEY_DOWN: return KeyEvent.VK_DOWN;
-            case GLFW.GLFW_KEY_DELETE: return KeyEvent.VK_DELETE;
-            case GLFW.GLFW_KEY_HOME: return KeyEvent.VK_HOME;
-            case GLFW.GLFW_KEY_END: return KeyEvent.VK_END;
-            case GLFW.GLFW_KEY_PAGE_UP: return KeyEvent.VK_PAGE_UP;
-            case GLFW.GLFW_KEY_PAGE_DOWN: return KeyEvent.VK_PAGE_DOWN;
-            default:
-                return glfwKey;
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
+        if (browser != null) {
+            double scale = getScaleFactor();
+            int scaledX = (int) (mouseX * scale);
+            int scaledY = (int) (mouseY * scale);
+            int scrollAmount = (int) Math.round(amount * 120); // Convert to standard scroll units
+            browser.sendMouseWheel(scaledX, scaledY, scrollAmount, 0);
         }
+        return super.mouseScrolled(mouseX, mouseY, amount);
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser != null) {
-            int awtKey = mapGlfwToAwt(keyCode);
-            KeyEvent ev = new KeyEvent(DUMMY_CANVAS, KeyEvent.KEY_PRESSED, System.currentTimeMillis(), modifiers, awtKey, (char) 0);
-            browser.sendKeyEvent(ev);
+            browser.sendKeyPress(keyCode, scanCode, modifiers);
+            browser.setFocus(true);
         }
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             if (isOverlay) {
@@ -208,21 +184,20 @@ public class WebTitleScreen extends Screen {
 
     @Override
     public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser != null) {
-            int awtKey = mapGlfwToAwt(keyCode);
-            KeyEvent ev = new KeyEvent(DUMMY_CANVAS, KeyEvent.KEY_RELEASED, System.currentTimeMillis(), modifiers, awtKey, (char) 0);
-            browser.sendKeyEvent(ev);
+            browser.sendKeyRelease(keyCode, scanCode, modifiers);
+            browser.setFocus(true);
         }
         return super.keyReleased(keyCode, scanCode, modifiers);
     }
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
-        IBrowser browser = WebUIManager.getInstance().getBrowser();
+        MCEFBrowser browser = WebUIManager.getInstance().getBrowser();
         if (browser != null) {
-            KeyEvent ev = new KeyEvent(DUMMY_CANVAS, KeyEvent.KEY_TYPED, System.currentTimeMillis(), modifiers, 0, codePoint);
-            browser.sendKeyEvent(ev);
+            browser.sendKeyTyped(codePoint, modifiers);
+            browser.setFocus(true);
         }
         return super.charTyped(codePoint, modifiers);
     }

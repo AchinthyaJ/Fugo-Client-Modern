@@ -1,8 +1,9 @@
 package io.github.fugoclient.mcefmod;
 
-import net.montoyo.mcef.api.IJSQueryHandler;
-import net.montoyo.mcef.api.IBrowser;
-import net.montoyo.mcef.api.IJSQueryCallback;
+import org.cef.browser.CefBrowser;
+import org.cef.browser.CefFrame;
+import org.cef.handler.CefMessageRouterHandlerAdapter;
+import org.cef.callback.CefQueryCallback;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -18,12 +19,23 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonArray;
 import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 
-public class MinecraftJSBridge implements IJSQueryHandler {
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpExchange;
+
+public class MinecraftJSBridge extends CefMessageRouterHandlerAdapter {
+
+    private static HttpServer editorServer = null;
+    private static final int EDITOR_PORT = 8642;
 
     @Override
-    public boolean onQuery(IBrowser b, long queryId, String query, boolean persistent, IJSQueryCallback cb) {
+    public boolean onQuery(CefBrowser b, CefFrame frame, long queryId, String query, boolean persistent, CefQueryCallback cb) {
         try {
             System.out.println("[Fugo Bridge] Received query: " + query);
             JsonObject json = JsonParser.parseString(query).getAsJsonObject();
@@ -200,7 +212,7 @@ public class MinecraftJSBridge implements IJSQueryHandler {
                                     world.setDayTime(ticks);
                                 }
                             } else if (client.player != null && client.getConnection() != null) {
-                                client.player.connection.sendChatCommand("time set " + ticks);
+                                client.player.connection.sendCommand("time set " + ticks);
                             }
                         });
                     } catch (Exception ex) {
@@ -228,7 +240,7 @@ public class MinecraftJSBridge implements IJSQueryHandler {
                                     }
                                 }
                             } else if (client.player != null && client.getConnection() != null) {
-                                client.player.connection.sendChatCommand("weather " + weatherType);
+                                client.player.connection.sendCommand("weather " + weatherType);
                             }
                         });
                     } catch (Exception ex) {
@@ -306,7 +318,7 @@ public class MinecraftJSBridge implements IJSQueryHandler {
                         File dir = type.equals("screenshot") ? new File(client.gameDirectory, "screenshots") : new File(client.gameDirectory, "flashback/replays");
                         File file = new File(dir, name);
                         if (file.exists()) {
-                            Util.getPlatform().open(file);
+                            Util.getPlatform().openUrl(file.toURI().toURL());
                         }
                     } catch (Exception ex) {
                         ex.printStackTrace();
@@ -321,7 +333,7 @@ public class MinecraftJSBridge implements IJSQueryHandler {
                         if (!dir.exists()) {
                             dir.mkdirs();
                         }
-                        Util.getPlatform().open(dir);
+                        Util.getPlatform().openUrl(dir.toURI().toURL());
                     } catch (Exception ex) {
                         ex.printStackTrace();
                     }
@@ -343,8 +355,35 @@ public class MinecraftJSBridge implements IJSQueryHandler {
                     cb.success("{\"status\":\"success\"}");
                     return true;
                 }
+                case "theme:get": {
+                    File themeFile = new File(client.gameDirectory, "fugo-theme.json");
+                    String content = "{}";
+                    if (themeFile.exists()) {
+                        try {
+                            content = new String(Files.readAllBytes(themeFile.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                        } catch (Exception ignored) {}
+                    }
+                    cb.success(content);
+                    return true;
+                }
                 case "recipes:get": {
                     cb.success("[]");
+                    return true;
+                }
+                case "launch_editor": {
+                    new Thread(() -> {
+                        try {
+                            startEditorServer();
+                            // Open system browser
+                            String url = "http://localhost:" + EDITOR_PORT + "/editor.html";
+                            Util.getPlatform().openUri(url);
+                            System.out.println("[Fugo Bridge] Editor launched at: " + url);
+                        } catch (Exception ex) {
+                            System.out.println("[Fugo Bridge] Failed to launch editor: " + ex.getMessage());
+                            ex.printStackTrace();
+                        }
+                    }, "Fugo-Editor-Launcher").start();
+                    cb.success("{\"status\":\"success\",\"port\":" + EDITOR_PORT + "}");
                     return true;
                 }
                 default:
@@ -358,7 +397,188 @@ public class MinecraftJSBridge implements IJSQueryHandler {
         }
     }
 
+    /**
+     * Starts a lightweight HTTP server that serves the web UI directory
+     * so the theme editor can be accessed in the system browser.
+     */
+    private static synchronized void startEditorServer() throws Exception {
+        if (editorServer != null) {
+            System.out.println("[Fugo Editor] Server already running on port " + EDITOR_PORT);
+            return;
+        }
+
+        // Find the web assets directory - check common locations
+        File webDir = findWebAssetsDir();
+        if (webDir == null || !webDir.exists()) {
+            throw new RuntimeException("Could not find web assets directory");
+        }
+
+        System.out.println("[Fugo Editor] Serving from: " + webDir.getAbsolutePath());
+
+        editorServer = HttpServer.create(new InetSocketAddress("127.0.0.1", EDITOR_PORT), 0);
+        final File serveDir = webDir;
+
+        editorServer.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+
+            // Allow CORS preflight OPTIONS requests
+            if (exchange.getRequestMethod().equalsIgnoreCase("OPTIONS")) {
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                exchange.sendResponseHeaders(204, -1);
+                exchange.getResponseBody().close();
+                return;
+            }
+
+            // API: get current theme
+            if (exchange.getRequestMethod().equalsIgnoreCase("GET") && path.equals("/api/get-theme")) {
+                File themeFile = new File(Minecraft.getInstance().gameDirectory, "fugo-theme.json");
+                String content = "{}";
+                if (themeFile.exists()) {
+                    try {
+                        content = new String(Files.readAllBytes(themeFile.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                    } catch (Exception ignored) {}
+                }
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                byte[] data = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, data.length);
+                exchange.getResponseBody().write(data);
+                exchange.getResponseBody().close();
+                return;
+            }
+
+            // API: apply and save theme
+            if (exchange.getRequestMethod().equalsIgnoreCase("POST") && path.equals("/api/apply-theme")) {
+                try {
+                    InputStream is = exchange.getRequestBody();
+                    byte[] bodyBytes = is.readAllBytes();
+                    String body = new String(bodyBytes, java.nio.charset.StandardCharsets.UTF_8);
+                    
+                    // Save to config directory
+                    File themeFile = new File(Minecraft.getInstance().gameDirectory, "fugo-theme.json");
+                    Files.write(themeFile.toPath(), bodyBytes);
+                    
+                    // Apply to in-game CEF browser
+                    Minecraft.getInstance().execute(() -> {
+                        try {
+                            if (WebUIManager.getInstance().getBrowser() != null) {
+                                WebUIManager.getInstance().getBrowser().executeJavaScript(
+                                    "if (window.applyThemeData) window.applyThemeData(" + body + ");", "", 0
+                                );
+                            }
+                        } catch (Exception ignored) {}
+                    });
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    String resp = "{\"status\":\"success\"}";
+                    exchange.sendResponseHeaders(200, resp.length());
+                    exchange.getResponseBody().write(resp.getBytes());
+                    exchange.getResponseBody().close();
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                    String err = "{\"status\":\"error\",\"message\":\"" + ex.getMessage().replace("\"", "\\\"") + "\"}";
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(500, err.length());
+                    exchange.getResponseBody().write(err.getBytes());
+                    exchange.getResponseBody().close();
+                }
+                return;
+            }
+
+            if (path.equals("/")) path = "/editor.html";
+
+            File file = new File(serveDir, path);
+            try {
+                File canonicalFile = file.getCanonicalFile();
+                File canonicalServeDir = serveDir.getCanonicalFile();
+                if (!canonicalFile.exists() || !canonicalFile.isFile() || !canonicalFile.getPath().startsWith(canonicalServeDir.getPath())) {
+                    String notFound = "404 Not Found";
+                    exchange.sendResponseHeaders(404, notFound.length());
+                    exchange.getResponseBody().write(notFound.getBytes());
+                    exchange.getResponseBody().close();
+                    return;
+                }
+            } catch (Exception ex) {
+                String notFound = "500 Internal Server Error";
+                exchange.sendResponseHeaders(500, notFound.length());
+                exchange.getResponseBody().write(notFound.getBytes());
+                exchange.getResponseBody().close();
+                return;
+            }
+
+            // Determine content type
+            String contentType = "application/octet-stream";
+            String name = file.getName().toLowerCase();
+            if (name.endsWith(".html")) contentType = "text/html; charset=utf-8";
+            else if (name.endsWith(".css")) contentType = "text/css; charset=utf-8";
+            else if (name.endsWith(".js")) contentType = "application/javascript; charset=utf-8";
+            else if (name.endsWith(".json")) contentType = "application/json; charset=utf-8";
+            else if (name.endsWith(".png")) contentType = "image/png";
+            else if (name.endsWith(".ico")) contentType = "image/x-icon";
+            else if (name.endsWith(".svg")) contentType = "image/svg+xml";
+
+            byte[] data = Files.readAllBytes(file.toPath());
+
+            // CORS headers so the iframe works
+            exchange.getResponseHeaders().set("Content-Type", contentType);
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.sendResponseHeaders(200, data.length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(data);
+            os.close();
+        });
+
+        editorServer.setExecutor(null);
+        editorServer.start();
+        System.out.println("[Fugo Editor] HTTP server started on http://127.0.0.1:" + EDITOR_PORT);
+    }
+
+    /**
+     * Locates the web assets directory on disk.
+     * Checks dev environment paths and extracted resource locations.
+     */
+    private static File findWebAssetsDir() {
+        // 1. Check dev environment (source tree)
+        String[] devPaths = {
+            "src/main/resources/assets/fugoclient/web",
+            "../src/main/resources/assets/fugoclient/web",
+            "forge-1.20.1/src/main/resources/assets/fugoclient/web"
+        };
+        for (String p : devPaths) {
+            File f = new File(p);
+            if (f.exists() && new File(f, "editor.html").exists()) return f;
+        }
+
+        // 2. Check game directory for extracted assets
+        Minecraft mc = Minecraft.getInstance();
+        File gameDir = mc.gameDirectory;
+        File extracted = new File(gameDir, "web-ui");
+        if (extracted.exists() && new File(extracted, "editor.html").exists()) return extracted;
+
+        // 3. Try to extract from classpath to game directory
+        try {
+            String[] webFiles = {"editor.html", "editor.css", "editor.js", "hud.html", "titlescreen.html", "style.css", "script.js", "launcherbackground.png", "minecraft.ico"};
+            extracted.mkdirs();
+            for (String fileName : webFiles) {
+                InputStream is = MinecraftJSBridge.class.getClassLoader().getResourceAsStream("assets/fugoclient/web/" + fileName);
+                if (is != null) {
+                    Files.copy(is, new File(extracted, fileName).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    is.close();
+                }
+            }
+            if (new File(extracted, "editor.html").exists()) return extracted;
+        } catch (Exception ex) {
+            System.out.println("[Fugo Editor] Failed to extract web assets: " + ex.getMessage());
+        }
+
+        return null;
+    }
+
     @Override
-    public void cancelQuery(IBrowser browser, long queryId) {
+    public void onQueryCanceled(CefBrowser browser, CefFrame frame, long queryId) {
     }
 }

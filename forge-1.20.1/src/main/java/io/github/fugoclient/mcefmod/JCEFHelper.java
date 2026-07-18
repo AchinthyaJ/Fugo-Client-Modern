@@ -18,8 +18,6 @@ public class JCEFHelper {
                 commandLine.appendSwitch("disable-gpu-compositing");
                 commandLine.appendSwitch("disable-gpu-sandbox");
                 commandLine.appendSwitch("disable-gpu-vsync");
-                // NOTE: removed "in-process-gpu" — contradicts "disable-gpu" and caused AWT exceptions
-                // NOTE: removed "disable-software-rasterizer" — contradicts "disable-gpu" (need SW rasterizer when GPU disabled)
 
                 // Disable unused features to save memory/CPU
                 commandLine.appendSwitch("disable-extensions");

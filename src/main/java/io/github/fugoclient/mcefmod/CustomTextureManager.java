@@ -91,32 +91,33 @@ public class CustomTextureManager {
 
     public static void tick() {
         if (!loaded) {
-            loadCustomTextures();
+            if (!loadAttempted) loadCustomTextures();
             return;
         }
 
-        if (capeFramesCount > 1 && fullCapeImage != null && frameImage != null && capeTexture != null) {
-            tickDivider++;
-            if (tickDivider >= 4) {
-                tickDivider = 0;
-                currentCapeFrame = (currentCapeFrame + 1) % capeFramesCount;
+        // Fast path: single-frame capes need no animation work
+        if (capeFramesCount <= 1) return;
+        if (fullCapeImage == null || frameImage == null || capeTexture == null) return;
 
-                try {
-                    int width = fullCapeImage.getWidth();
-                    int height = fullCapeImage.getHeight();
-                    int srcY = currentCapeFrame * capeFrameHeight;
+        tickDivider++;
+        if (tickDivider < 4) return;
+        tickDivider = 0;
+        currentCapeFrame = (currentCapeFrame + 1) % capeFramesCount;
 
-                    if (srcY + capeFrameHeight > height) {
-                        currentCapeFrame = 0;
-                        srcY = 0;
-                    }
+        try {
+            int width = fullCapeImage.getWidth();
+            int height = fullCapeImage.getHeight();
+            int srcY = currentCapeFrame * capeFrameHeight;
 
-                    fullCapeImage.copyRect(frameImage, 0, srcY, 0, 0, width, capeFrameHeight, false, false);
-                    capeTexture.upload();
-                } catch (Exception e) {
-                    capeFramesCount = 1;
-                }
+            if (srcY + capeFrameHeight > height) {
+                currentCapeFrame = 0;
+                srcY = 0;
             }
+
+            fullCapeImage.copyRect(frameImage, 0, srcY, 0, 0, width, capeFrameHeight, false, false);
+            capeTexture.upload();
+        } catch (Exception e) {
+            capeFramesCount = 1;
         }
     }
 

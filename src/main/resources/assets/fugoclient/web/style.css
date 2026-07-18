@@ -127,7 +127,7 @@ body {
 /* Modern launcherbackground backdrop - title screen only */
 #title-screen-container {
     z-index: 0;
-    background: url('launcherbackground.png') no-repeat center center;
+    background: var(--menu-bg-url, url('launcherbackground.png')) no-repeat center center;
     background-size: cover;
 }
 
@@ -2095,8 +2095,8 @@ input[type="color"]::-webkit-color-swatch {
 /* --- New Minimalist Title Screen Layout (FUGO Concept) --- */
 .top-left-logo {
     position: absolute;
-    top: 4rem;
-    left: 4.5rem;
+    top: var(--menu-logo-top, 4rem);
+    left: var(--menu-logo-left, 4.5rem);
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -2113,8 +2113,8 @@ input[type="color"]::-webkit-color-swatch {
 
 .title-profiles-btn {
     position: absolute;
-    top: 4rem;
-    right: 4.5rem;
+    top: var(--menu-profiles-top, 4rem);
+    right: var(--menu-profiles-right, 4.5rem);
     height: 44px;
     padding: 0 1.3rem;
     border-radius: 12px;
@@ -2163,9 +2163,9 @@ input[type="color"]::-webkit-color-swatch {
 
 .mid-left-panel {
     position: absolute;
-    left: 4.5rem;
-    top: 55%;
-    transform: translateY(-50%);
+    left: var(--menu-buttons-left, 4.5rem);
+    top: var(--menu-buttons-top, 55%);
+    transform: var(--menu-buttons-transform, translateY(-50%));
     width: 345px;
     background: rgba(35, 35, 40, 0.85);
     border: 1px solid rgba(255, 255, 255, 0.12);
@@ -2207,6 +2207,18 @@ input[type="color"]::-webkit-color-swatch {
     box-shadow: 0 4px 12px var(--hub-accent-glow);
 }
 
+.btn-singleplayer {
+    position: relative;
+    top: var(--menu-btn-singleplayer-top, 0);
+    left: var(--menu-btn-singleplayer-left, 0);
+}
+
+.btn-multiplayer {
+    position: relative;
+    top: var(--menu-btn-multiplayer-top, 0);
+    left: var(--menu-btn-multiplayer-left, 0);
+}
+
 .btn-singleplayer:hover, .btn-multiplayer:hover {
     transform: translateY(-2px);
     box-shadow: 0 8px 24px var(--hub-accent-glow);
@@ -2230,6 +2242,8 @@ input[type="color"]::-webkit-color-swatch {
     border: 1px solid rgba(255, 255, 255, 0.05) !important;
     color: rgba(255, 255, 255, 0.8) !important;
     position: relative;
+    top: var(--menu-btn-settings-top, 0);
+    left: var(--menu-btn-settings-left, 0);
 }
 
 .btn-settings:hover {
@@ -2262,6 +2276,9 @@ input[type="color"]::-webkit-color-swatch {
     background: rgba(239, 74, 103, 0.04);
     border: 1px solid rgba(239, 74, 103, 0.12) !important;
     color: rgba(239, 74, 103, 0.85) !important;
+    position: relative;
+    top: var(--menu-btn-quit-top, 0);
+    left: var(--menu-btn-quit-left, 0);
 }
 
 .btn-quit:hover {
@@ -4873,8 +4890,8 @@ input:checked + .slider:before {
 /* Bottom Left Quick Join Panel */
 .bottom-left-quickjoin {
     position: absolute;
-    bottom: 2rem;
-    left: 2rem;
+    bottom: var(--menu-quickjoin-bottom, 2rem);
+    left: var(--menu-quickjoin-left, 2rem);
     z-index: 10;
 }
 

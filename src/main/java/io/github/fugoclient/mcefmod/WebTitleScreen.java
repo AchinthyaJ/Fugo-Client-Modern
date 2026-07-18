@@ -13,12 +13,20 @@ import net.minecraft.client.gui.render.state.TexturedQuadGuiElementRenderState;
 import net.minecraft.client.texture.TextureSetup;
 import org.joml.Matrix3x2f;
 import net.minecraft.client.gui.Click;
+import net.minecraft.client.gui.ScreenRect;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.input.CharInput;
 
 public class WebTitleScreen extends Screen {
     private final boolean isOverlay;
     private final boolean isEditMode;
+
+    // === ZERO-ALLOCATION RENDER CACHE ===
+    private final Matrix3x2f cachedMatrix = new Matrix3x2f();
+    private TexturedQuadGuiElementRenderState cachedRenderState = null;
+    private GpuTextureView lastTextureView = null;
+    private int lastRenderWidth = 0;
+    private int lastRenderHeight = 0;
 
     public WebTitleScreen(boolean isOverlay) {
         this(isOverlay, false);
@@ -67,23 +75,24 @@ public class WebTitleScreen extends Screen {
         GpuTextureView gpuTextureView = (browser != null) ? browser.getTextureView() : null;
 
         if (gpuTextureView != null) {
-            // Browser is ready, render its texture
-            io.github.fugoclient.mcefmod.mixin.DrawContextAccessor accessor = (io.github.fugoclient.mcefmod.mixin.DrawContextAccessor) context;
-            accessor.getGuiRenderState().addSimpleElementToCurrentLayer(new TexturedQuadGuiElementRenderState(
+            // Rebuild render state only when texture or dimensions change - ZERO per-frame allocations
+            if (gpuTextureView != lastTextureView || width != lastRenderWidth || height != lastRenderHeight || cachedRenderState == null) {
+                lastTextureView = gpuTextureView;
+                lastRenderWidth = width;
+                lastRenderHeight = height;
+                cachedMatrix.set(context.getMatrices());
+                cachedRenderState = new TexturedQuadGuiElementRenderState(
                     RenderPipelines.GUI_TEXTURED,
                     TextureSetup.of(gpuTextureView, RenderSystem.getSamplerCache().get(FilterMode.LINEAR)),
-                    new Matrix3x2f(context.getMatrices()),
-                    0,
-                    0,
-                    width,
-                    height,
-                    0.0F,
-                    1.0F,
-                    0.0F,
-                    1.0F,
+                    cachedMatrix,
+                    0, 0, width, height,
+                    0.0F, 1.0F, 0.0F, 1.0F,
                     0xFFFFFFFF,
-                    new net.minecraft.client.gui.ScreenRect(0, 0, width, height)
-            ));
+                    new ScreenRect(0, 0, width, height)
+                );
+            }
+            io.github.fugoclient.mcefmod.mixin.DrawContextAccessor accessor = (io.github.fugoclient.mcefmod.mixin.DrawContextAccessor) context;
+            accessor.getGuiRenderState().addSimpleElementToCurrentLayer(cachedRenderState);
         } else {
             // Browser not ready, show loading text
             context.drawCenteredTextWithShadow(
